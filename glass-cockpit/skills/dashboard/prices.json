@@ -1,0 +1,23 @@
+{
+  "updated_at": "2026-09-25",
+  "source": "claude-api スキルのモデル価格表",
+  "unit": "USD / 100万トークン",
+  "cache_write_multiplier": {
+    "5m": 1.25,
+    "1h": 2.0
+  },
+  "fast_mode_multiplier": 2,
+  "models": [
+    {"prefix": "claude-fable-5-1", "input": 10.0, "output": 50.0, "cache_read": 0.25, "tier": "high"},
+    {"prefix": "claude-mythos-5-1", "input": 10.0, "output": 50.0, "cache_read": 0.25, "tier": "high"},
+    {"prefix": "claude-fable-5", "input": 10.0, "output": 50.0, "cache_read": 1.0, "tier": "high"},
+    {"prefix": "claude-mythos-5", "input": 10.0, "output": 50.0, "cache_read": 1.0, "tier": "high"},
+    {"prefix": "claude-opus-5-5", "input": 4.0, "output": 20.0, "cache_read": 0.2, "tier": "high"},
+    {"prefix": "claude-opus-5", "input": 5.0, "output": 25.0, "cache_read": 0.5, "tier": "high"},
+    {"prefix": "claude-opus-4", "input": 5.0, "output": 25.0, "cache_read": 0.5, "tier": "high"},
+    {"prefix": "claude-sonnet-5-5", "input": 2.0, "output": 10.0, "cache_read": 0.2, "tier": "low"},
+    {"prefix": "claude-sonnet-5", "input": 2.0, "output": 10.0, "cache_read": 0.2, "tier": "low"},
+    {"prefix": "claude-sonnet-4", "input": 3.0, "output": 15.0, "cache_read": 0.3, "tier": "low"},
+    {"prefix": "claude-haiku-4-5", "input": 1.0, "output": 5.0, "cache_read": 0.1, "tier": "low"}
+  ]
+}

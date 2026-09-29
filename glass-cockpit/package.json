@@ -1,0 +1,6 @@
+{
+  "name": "glass-cockpit",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.18" }
+}

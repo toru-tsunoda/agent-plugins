@@ -1,0 +1,9 @@
+{
+  "name": "glass-cockpit",
+  "version": "0.1.0",
+  "description": "AI の作業を見守る作業ダッシュボード。.dev/dashboard.json のタスクと質問に、セッションログから集計した費用・キャッシュ読み込み率・ツールのエラー率などを並べて表示する。",
+  "author": {
+    "name": "enokizako"
+  },
+  "license": "MIT"
+}
