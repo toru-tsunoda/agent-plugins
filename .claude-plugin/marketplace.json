@@ -11,8 +11,7 @@
     {
       "name": "glass-cockpit",
       "source": "./glass-cockpit",
-      "description": "AI の作業を見守る作業ダッシュボード。.dev/board.json のタスクと質問に、セッションログから集計した指標を並べて表示する。",
-      "version": "0.1.0",
+      "description": "AI の作業を見守る作業ダッシュボード。.dev/dashboard.json のタスクと質問に、セッションログから集計した指標を並べて表示する。",
       "author": {
         "name": "enokizako"
       },

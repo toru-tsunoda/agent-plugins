@@ -5,5 +5,7 @@
   "author": {
     "name": "enokizako"
   },
+  "homepage": "https://github.com/enokizako/enokizako-agent-plugins/tree/main/glass-cockpit",
+  "repository": "https://github.com/enokizako/enokizako-agent-plugins",
   "license": "MIT"
 }
