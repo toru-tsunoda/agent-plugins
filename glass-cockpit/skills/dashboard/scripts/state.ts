@@ -15,7 +15,7 @@ export type StateKind =
   | "idle" // ターンを終えて、人の入力待ち
   | "interrupted" // 人が中断した
   | "api_error" // API エラーで止まった
-  | "ended" // セッションを閉じた (フックの記録で判定する)
+  | "ended" // セッションを閉じた (フックの記録か、プロセスが無いことで判定する)
   | "none"; // 記録なし
 
 export interface SessionState {
@@ -26,8 +26,8 @@ export interface SessionState {
   tool: { name: string; detail: string } | null;
   /** 親がターンを終えた後も動いているサブエージェントの数 */
   background: number;
-  /** hook: フックの記録 / log: フックより新しいログ / estimate: フックの記録が無く、ログから推定 / none: 記録なし */
-  source: "hook" | "log" | "estimate" | "none";
+  /** hook: フックの記録 / log: フックより新しいログ / estimate: フックの記録が無く、ログから推定 / process: プロセスが無いので終了 / none: 記録なし */
+  source: "hook" | "log" | "estimate" | "process" | "none";
 }
 
 const clip = (s: string, n = 60) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
@@ -144,8 +144,20 @@ const WORKING: StateKind[] = ["tool", "thinking"];
  * フックの記録 (今の状態) とログ (遅れて書かれる、最後に観測できた状態) を合わせる。
  * フックの最後の記録がログの最後の記録より新しければフックを採る。ログのほうが新しければ、
  * フックが取れなかった出来事 (人の中断など) があったとみなしてログを採る。
+ * running は、そのセッションのプロセスが動いているか (running.ts)。分からなければ null。
  */
-export function sessionState(main: StateTracker | null, subs: StateTracker[], hook: HookState | null): SessionState {
+export function sessionState(
+  main: StateTracker | null,
+  subs: StateTracker[],
+  hook: HookState | null,
+  running: boolean | null = null,
+): SessionState {
+  // プロセスが無ければ閉じている。フックの記録が無いセッションや、SessionEnd が届かずに終わったセッションも、これで分かる
+  if (running === false) {
+    if (hook?.kind === "ended") return { kind: "ended", since: hook.since, tool: null, background: 0, source: "hook" };
+    const last = [hook?.lastAt, main?.lastTs].filter((t): t is string => !!t).sort().pop() ?? null;
+    return { kind: "ended", since: last, tool: null, background: 0, source: "process" };
+  }
   if (hook && hook.kind !== "none" && (!main?.lastTs || hook.lastAt >= main.lastTs)) {
     return { kind: hook.kind, since: hook.since, tool: hook.tool, background: hook.agents, source: "hook" };
   }

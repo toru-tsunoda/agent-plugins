@@ -18,6 +18,7 @@ import { parseArgs } from "node:util";
 import { summarizeActivity, type SkillRun, type SkillScope, type ToolUse } from "./activity.ts";
 import { readHookState } from "./hookstate.ts";
 import { configDir, expandUser } from "./paths.ts";
+import { runningSessions } from "./running.ts";
 import { sessionState, StateTracker } from "./state.ts";
 
 type Json = Record<string, any>;
@@ -507,6 +508,11 @@ export function collect(
   for (const s of live) {
     if (latest === null || lastOf(s) > lastOf(latest)) latest = s;
   }
+  // プロセスが動いているか。Claude Code が必ず登録すると確かめたのは、ターミナルの対話セッション (entrypoint が cli) だけ。
+  // ほかは分からない (null) として、ログとフックの記録で判定する
+  const running = runningSessions();
+  const stateOf = (s: Session) =>
+    sessionState(s.main, s.subs, hooks.get(s.id) ?? null, running && s.main?.entrypoint === "cli" ? running.has(s.id) : null);
   let errors = 0;
   let bashExits = 0;
   let denials = 0;
@@ -537,7 +543,7 @@ export function collect(
             cwd: latest.cwd,
             title: latest.title,
             branch: latest.branch,
-            state: sessionState(latest.main, latest.subs, hooks.get(latest.id) ?? null),
+            state: stateOf(latest),
             model: latest.model,
             model_tier: latest.model ? (priceFor(prices, latest.model)?.tier ?? "unknown") : null,
             context_misses: latest.unexpectedMisses,
@@ -569,7 +575,7 @@ export function collect(
         cwd: s.cwd,
         last_at: lastOf(s),
         cost_usd: round4(s.cost),
-        state: sessionState(s.main, s.subs, hooks.get(s.id) ?? null),
+        state: stateOf(s),
       })),
     api_calls: calls,
     cache_read_rate: tokAll ? round4(tokRead / tokAll) : null,
