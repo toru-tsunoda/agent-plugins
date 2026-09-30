@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * 作業ダッシュボード: .dev/dashboard.json (タスクと質問) とセッションログの指標から、ダッシュボードの HTML を作る。
+ * 作業ダッシュボード: .dev/glass-cockpit/dashboard.json (タスクと質問) とセッションログの指標から、ダッシュボードの HTML を作る。
  *
- *   node dashboard.ts init     # カレントディレクトリに .dev/dashboard.json を作る
- *   node dashboard.ts build    # .dev/dashboard.html を書き出す
+ *   node dashboard.ts init     # カレントディレクトリに .dev/glass-cockpit/dashboard.json を作る
+ *   node dashboard.ts build    # .dev/glass-cockpit/dashboard.html を書き出す
  *   node dashboard.ts serve    # http://127.0.0.1:8765 で開く。開くたびに集計し直し、30秒ごとに再読み込み
  *
  * dashboard.json は AI が作業しながら書き換える前提 (タスクの状態、質問の追加、回答の記入)。
@@ -18,11 +18,12 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { cleanupPeriodDays, collect, configDir, currentBranch, expandUser, loadPrices, sinceDaysAgo } from "./collect.ts";
 import { initDashboard, pricesPathFor } from "./init.ts";
+import { DASHBOARD_DIR } from "./paths.ts";
 import { worktreeRows, type WorktreeRow } from "./worktrees.ts";
 
 type Json = Record<string, any>;
 
-const DEFAULT_DASHBOARD = path.join(".dev", "dashboard.json");
+const DEFAULT_DASHBOARD = path.join(DASHBOARD_DIR, "dashboard.json");
 const STATUS_ORDER: Record<string, number> = { doing: 0, blocked: 1, todo: 2, done: 3, dropped: 4 };
 const TODO_VISIBLE = 10; // todo はこの件数だけ表に出し、残りは折りたたむ
 const URGENCY_CLASS: Record<string, string> = { 高: "crit", 中: "warn", 低: "", high: "crit", mid: "warn", low: "" };
@@ -748,7 +749,7 @@ async function main(): Promise<number> {
   if (a.help || !["init", "build", "serve"].includes(cmd)) {
     console.error(
       "usage: node dashboard.ts {init|build|serve} [--dashboard PATH] [--out FILE] [--host H] [--port N] [--refresh SEC]\n" +
-        `  init   カレントディレクトリに .dev/dashboard.json と .dev/prices.json を作る\n` +
+        `  init   カレントディレクトリに ${DASHBOARD_DIR}/ を作り、dashboard.json と prices.json を置く\n` +
         `  build  dashboard.json の隣に dashboard.html を書き出す (--out で変更)\n` +
         `  serve  HTTP で配信し、開くたびに集計し直す (--host, --port, --refresh)\n` +
         `  --dashboard の既定: ${DEFAULT_DASHBOARD}`,

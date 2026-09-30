@@ -29,7 +29,7 @@ Node.js 22.18 以降が要る（スクリプトは TypeScript のまま Node.js 
 
 Claude に頼む。
 
-- 「作業ダッシュボードを作って」: `.dev/dashboard.json` と料金表 `.dev/prices.json` を作り、料金表を公式の料金ページで最新にする。
+- 「作業ダッシュボードを作って」: `.dev/glass-cockpit/` に `dashboard.json` と料金表 `prices.json` を作り、料金表を公式の料金ページで最新にする。
 - 「ダッシュボードを開いて」: HTML を作って開く。常に最新で見たい時は `serve` で開くよう頼む。
 
 ダッシュボードを作った後は、セッションの始めにフックが更新の手順を Claude に伝える。Claude はタスクに着手した時・終えた時・進めなくなった時・人に判断を仰ぎたい時に、`dashboard.json` を書き換える。回答はチャットで返す。
@@ -43,8 +43,8 @@ Claude に頼む。
 スクリプトはこのフォルダの `skills/dashboard/scripts/dashboard.ts`。ダッシュボードを置くプロジェクトのルートで実行する。
 
 ```sh
-node <このフォルダ>/skills/dashboard/scripts/dashboard.ts init   # .dev/dashboard.json と .dev/prices.json を作る
-node <このフォルダ>/skills/dashboard/scripts/dashboard.ts build  # .dev/dashboard.html を書き出す
+node <このフォルダ>/skills/dashboard/scripts/dashboard.ts init   # .dev/glass-cockpit/ に dashboard.json と prices.json を作る
+node <このフォルダ>/skills/dashboard/scripts/dashboard.ts build  # .dev/glass-cockpit/dashboard.html を書き出す
 node <このフォルダ>/skills/dashboard/scripts/dashboard.ts serve  # http://127.0.0.1:8765 で配信する
 ```
 
@@ -55,7 +55,7 @@ node <このフォルダ>/skills/dashboard/scripts/dashboard.ts serve  # http://
 ```json
 {
   "title": "foo 作業ダッシュボード",
-  "project": "..",
+  "project": "../..",
   "cost_cap_usd": 300,
   "session_cap_usd": 25,
   "tasks": [
@@ -78,7 +78,7 @@ node <このフォルダ>/skills/dashboard/scripts/dashboard.ts serve  # http://
 
 ## worktree ごとに分ける
 
-親のリポジトリに `.dev/dashboard.json` があれば、git worktree の中でセッションを始めた時に、フックがその worktree 用のダッシュボードを作る。費用の上限と料金表は親から引き継ぎ、タスクは空で始まる。親のダッシュボードは worktree の分を数えないので、費用が二重にならない。
+親のリポジトリに `.dev/glass-cockpit/dashboard.json` があれば、git worktree の中でセッションを始めた時に、フックがその worktree 用のダッシュボードを作る。費用の上限と料金表は親から引き継ぎ、タスクは空で始まる。親のダッシュボードは worktree の分を数えないので、費用が二重にならない。
 
 ## フックが記録するもの
 

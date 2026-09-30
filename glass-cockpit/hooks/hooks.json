@@ -1,5 +1,5 @@
 {
-  "description": ".dev/dashboard.json のあるプロジェクトで、作業ダッシュボードの更新を Claude に伝える。git worktree の中では、その worktree 用のダッシュボードを自動で作る。ツールの実行・権限の確認・ターンの終了などを記録し、ダッシュボードに今の状態を出す",
+  "description": ".dev/glass-cockpit/dashboard.json のあるプロジェクトで、作業ダッシュボードの更新を Claude に伝える。git worktree の中では、その worktree 用のダッシュボードを自動で作る。ツールの実行・権限の確認・ターンの終了などを記録し、ダッシュボードに今の状態を出す",
   "hooks": {
     "SessionStart": [
       {

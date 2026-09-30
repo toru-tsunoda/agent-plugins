@@ -1,15 +1,19 @@
 #!/usr/bin/env node
 /**
  * SessionStart / CwdChanged hook:
- *  - プロジェクトに .dev/dashboard.json があれば、更新を忘れないよう Claude に伝える。
+ *  - プロジェクトに .dev/glass-cockpit/dashboard.json があれば、更新を忘れないよう Claude に伝える。
  *  - git worktree の中で、親リポジトリにだけ dashboard.json がある時は、その worktree 用のダッシュボードを作る。
  */
 import fs from "node:fs";
 import path from "node:path";
 import { gitWorktrees } from "../skills/dashboard/scripts/collect.ts";
 import { initDashboard } from "../skills/dashboard/scripts/init.ts";
+import { DASHBOARD_DIR, dashboardFile } from "../skills/dashboard/scripts/paths.ts";
 
 type Json = Record<string, any>;
+
+/** Claude に伝えるパス (プロジェクトのルートから) */
+const REL = path.join(DASHBOARD_DIR, "dashboard.json");
 
 const realpath = (p: string): string => {
   try {
@@ -38,19 +42,19 @@ try {
   // 標準入力が空・不正なら cwd から探す
 }
 const cwd: string = event.cwd || process.env.CLAUDE_PROJECT_DIR || process.cwd();
-let file = path.join(cwd, ".dev", "dashboard.json");
+let file = dashboardFile(cwd);
 let context = "";
 
 if (!fs.existsSync(file)) {
   const wt = linkedWorktree(cwd);
-  const parentFile = wt && path.join(wt.main, ".dev", "dashboard.json");
+  const parentFile = wt && dashboardFile(wt.main);
   if (wt && parentFile && fs.existsSync(parentFile)) {
-    file = path.join(wt.root, ".dev", "dashboard.json");
+    file = dashboardFile(wt.root);
     if (!fs.existsSync(file)) {
       try {
         initDashboard({ dashboardPath: file, cwd: wt.root, from: { dashboardPath: parentFile } });
         context =
-          `この worktree（${wt.root}）用の作業ダッシュボード（.dev/dashboard.json）を、親リポジトリのものを元に自動で作りました。` +
+          `この worktree（${wt.root}）用の作業ダッシュボード（${REL}）を、親リポジトリのものを元に自動で作りました。` +
           "上限は親から引き継ぎ、タスクと質問は空です。この worktree の作業内容に合わせて、タスクを追加してください。";
       } catch (e) {
         context = `worktree 用のダッシュボードを作れませんでした: ${(e as Error).message}`;
@@ -65,13 +69,13 @@ if (fs.existsSync(file)) {
     const doing = (dashboard.tasks || []).filter((t: Json) => t.status === "doing").map((t: Json) => t.id);
     const openQs = (dashboard.questions || []).filter((q: Json) => !q.answer).map((q: Json) => q.id);
     context +=
-      "このプロジェクトには作業ダッシュボード（.dev/dashboard.json）があります。" +
+      `このプロジェクトには作業ダッシュボード（${REL}）があります。` +
       "タスクに着手した時・終えた時・進めなくなった時、人に判断を仰ぎたい時、質問の回答を受け取った時は、" +
       "glass-cockpit:dashboard スキルの手順で dashboard.json を更新してください。" +
       `doing: ${doing.join(", ") || "なし"}、` +
       `未回答の質問: ${openQs.join(", ") || "なし"}。`;
   } catch (e) {
-    context += `このプロジェクトの作業ダッシュボード（.dev/dashboard.json）が JSON として読めません: ${(e as Error).message}。glass-cockpit:dashboard スキルの形式に直してください。`;
+    context += `このプロジェクトの作業ダッシュボード（${REL}）が JSON として読めません: ${(e as Error).message}。glass-cockpit:dashboard スキルの形式に直してください。`;
   }
 }
 

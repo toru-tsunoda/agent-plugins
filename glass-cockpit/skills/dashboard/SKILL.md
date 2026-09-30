@@ -1,34 +1,35 @@
 ---
 name: dashboard
-description: 作業ダッシュボード（.dev/dashboard.json）を作り、更新し、HTML で表示する。 ユーザーが「作業ダッシュボードを作って」「ダッシュボードを開いて」「ダッシュボードを見せて」と言った時に使用する。 .dev/dashboard.json のあるプロジェクトでは、タスクに着手・完了した時、進めなくなった時、人に判断を仰ぎたい時、質問の回答を受け取った時にも使用する。
+description: 作業ダッシュボード（.dev/glass-cockpit/dashboard.json）を作り、更新し、HTML で表示する。 ユーザーが「作業ダッシュボードを作って」「ダッシュボードを開いて」「ダッシュボードを見せて」と言った時に使用する。 .dev/glass-cockpit/dashboard.json のあるプロジェクトでは、タスクに着手・完了した時、進めなくなった時、人に判断を仰ぎたい時、質問の回答を受け取った時にも使用する。
 ---
 
 # 作業ダッシュボード
 
 AI が自律的に作業する時に、人が進み具合を一目で見られるようにするダッシュボード。
 
-- `.dev/dashboard.json`: タスクと質問。**AI が作業しながら書き換える**。
-- `.dev/dashboard.html`: `build` で生成する表示用の HTML。手で編集しない。
+- `.dev/glass-cockpit/dashboard.json`: タスクと質問。**AI が作業しながら書き換える**。
+- `.dev/glass-cockpit/dashboard.html`: `build` で生成する表示用の HTML。手で編集しない。
 - 指標（費用、キャッシュ読み込み率など）は Claude Code のセッションログから集計する。dashboard.json には書かない。
+- ファイルは `.dev/glass-cockpit/` にまとめる（ほかのツールのファイルと重ならないように）。
 
 スクリプトは TypeScript で、Node.js 22.18 以降で動く（ビルドも依存パッケージも要らない。Python は不要）。このスキルのベースディレクトリの `scripts/` にある。コマンドはプロジェクトのルートで実行する。
 
 | やること | コマンド |
 |---|---|
 | ダッシュボードを作る | `node <ベースディレクトリ>/scripts/dashboard.ts init` |
-| HTML を作って開く | `node <ベースディレクトリ>/scripts/dashboard.ts build` のあと `open .dev/dashboard.html` |
+| HTML を作って開く | `node <ベースディレクトリ>/scripts/dashboard.ts build` のあと `open .dev/glass-cockpit/dashboard.html` |
 | 常に最新で見る | `node <ベースディレクトリ>/scripts/dashboard.ts serve` をバックグラウンドで実行し、表示された URL を伝える |
 
-`init` は `.dev/dashboard.json` と、同梱の料金表のコピー `.dev/prices.json` を作る。どちらも既存のファイルは上書きしない。`serve` は開くたびに集計し直し、30秒ごとに再読み込みする。ポートが使われていれば次の空いているポートを使う。
+`init` は `.dev/glass-cockpit/` に、`dashboard.json` と、同梱の料金表のコピー `prices.json` を作る。どちらも既存のファイルは上書きしない。`serve` は開くたびに集計し直し、30秒ごとに再読み込みする。ポートが使われていれば次の空いているポートを使う。
 
 ## 料金表を最新にする
 
-費用は `.dev/prices.json` の単価で計算する。`init` でダッシュボードを作った直後は、必ず次の手順で料金表を最新にする（同梱のコピーは古いことがある）。`init` 済みのプロジェクトでも、`料金表` の日付（HTML の右上）が古い時や、`collect.ts` の出力の `unpriced_calls` が 0 でない時（単価のないモデルがある）は同じ手順をやる。
+費用は `.dev/glass-cockpit/prices.json` の単価で計算する。`init` でダッシュボードを作った直後は、必ず次の手順で料金表を最新にする（同梱のコピーは古いことがある）。`init` 済みのプロジェクトでも、`料金表` の日付（HTML の右上）が古い時や、`collect.ts` の出力の `unpriced_calls` が 0 でない時（単価のないモデルがある）は同じ手順をやる。
 
 1. 最新の単価を調べる。**公式の料金ページ（https://platform.claude.com/docs/en/about-claude/pricing）を必ず WebFetch で取得する**。`claude-api` スキルのモデル価格表は補助に使う。スキルの表は古いことがあるので、これだけで済ませない。
    - 公式ページとスキルの表で単価が違う時は、公式ページを採る。
    - 公式ページが取得できない時は、スキルの表で代用してよい。その場合は `source` にスキルの表を使ったことを書き、最終報告で公式ページを確認できなかったと伝える。
-2. `.dev/prices.json` の `models` を更新する。
+2. `.dev/glass-cockpit/prices.json` の `models` を更新する。
    - `prefix` はログの `model` 名の接頭辞。`claude-opus-5` と `claude-opus-5-5` のように、長い接頭辞が短いほうより先に照合される。
    - 単価は USD / 100万トークン。`input`、`output`、`cache_read` を書く。`tier` は、Opus・Fable・Mythos 以上なら `high`、Sonnet・Haiku なら `low`（「運用状況」のモデルの警告に使う）。キャッシュ書き込みは `cache_write_multiplier`（5分は input の 1.25 倍、1時間は 2 倍）で計算するので、ここには書かない。
    - 新しいモデルは行を足し、なくなったモデルの行は古いログの集計のために残す。
@@ -41,7 +42,7 @@ AI が自律的に作業する時に、人が進み具合を一目で見られ�
 
 PR のレビューや feature 開発を、フォルダ（git worktree）ごとに分けて見られる。
 
-- 親リポジトリに `.dev/dashboard.json` がある状態で、worktree の中でセッションを始める（または `cd` / `EnterWorktree` で入る）と、フックがその worktree の `.dev/dashboard.json` と `.dev/prices.json` を自動で作る。手で `init` する必要はない。
+- 親リポジトリに `.dev/glass-cockpit/dashboard.json` がある状態で、worktree の中でセッションを始める（または `cd` / `EnterWorktree` で入る）と、フックがその worktree の `.dev/glass-cockpit/` に `dashboard.json` と `prices.json` を自動で作る。手で `init` する必要はない。
   - 費用の上限と料金表は、親から引き継ぐ。タスクは空で始まるので、その worktree の作業に合わせてタスクを足す。
   - 親に `dashboard.json` が無いリポジトリや、git worktree でないフォルダでは何もしない。
 - 親のダッシュボードは、`exclude_worktrees` が `true` なら worktree の分を数えない。二重に数えず、worktree ごとの費用が分かれる。
@@ -53,7 +54,7 @@ PR のレビューや feature 開発を、フォルダ（git worktree）ごと�
 ```json
 {
   "title": "foo 作業ダッシュボード",
-  "project": "..",
+  "project": "../..",
   "created_at": "2026-09-30T01:00:00.000Z",
   "cost_cap_usd": 300,
   "session_cap_usd": 25,
@@ -77,7 +78,7 @@ PR のレビューや feature 開発を、フォルダ（git worktree）ごと�
 }
 ```
 
-- `project`: 指標を集計するプロジェクトのパス。dashboard.json の場所からの相対パス。`null` なら全プロジェクト。
+- `project`: 指標を集計するプロジェクトのパス。dashboard.json の場所からの相対パス（`.dev/glass-cockpit/` に置くので、プロジェクトのルートは `../..`）。`null` なら全プロジェクト。
 - `project`（続き）: フォルダ単位で集計する。作業ディレクトリがそのフォルダ自身か、その下にあるセッションが対象になる。
 - `created_at`: ダッシュボードを作った時刻（ISO 8601）。`init` と worktree のフックが入れる。レビューゲートは、これより後のスキル実行だけを数える。無ければ時刻では絞らない。同じダッシュボードで新しい作業を始める時は、今の時刻に書き換えると、ゲートを数え直せる。
 - `exclude_worktrees`: 既定は `true`（省略しても `true`）。`project` の中にある git worktree（Claude Code が作る `.claude/worktrees/` 以下を含む）のセッションを、この集計から除く。worktree の分は、その worktree 自身のダッシュボードで見る。`false` にすると、worktree の分も親に合算する。
@@ -102,7 +103,7 @@ PR のレビューや feature 開発を、フォルダ（git worktree）ごと�
   - 質問の ID は `Q1`, `Q2`, … と通しで振る。
 - **回答を受け取った時**: 回答はユーザーがチャットで返す。受け取ったら `answer` に書く。既定の行動と違う回答なら、その行動で進めた作業をやり直す。
 - **書き換えた後**:
-  - `node -e "JSON.parse(require('fs').readFileSync('.dev/dashboard.json'))"` で JSON として正しいか確かめる。
+  - `node -e "JSON.parse(require('fs').readFileSync('.dev/glass-cockpit/dashboard.json'))"` で JSON として正しいか確かめる。
   - `build` で HTML を作り直す（`serve` で見ている時は不要）。
 
 ## 今の状態
@@ -160,7 +161,7 @@ PR のレビューや feature 開発を、フォルダ（git worktree）ごと�
 
 ユーザーに聞かれたら、次の定義で説明する。集計する範囲は、`cleanupPeriodDays`（既定30日）の日数以内。Claude Code はこの日数より古いログを消す。
 
-- **費用（API 換算）**: トークン数 × API 単価（`.dev/prices.json`）の概算か、Claude Code がセッションに記録する費用（cost-state）の大きいほう。定額プランでも API 単価で出す。
+- **費用（API 換算）**: トークン数 × API 単価（`.dev/glass-cockpit/prices.json`）の概算か、Claude Code がセッションに記録する費用（cost-state）の大きいほう。定額プランでも API 単価で出す。
 - **直近のセッション**: 最後に動いたセッションの費用。
 - **キャッシュ読み込み率**: 入力トークンのうち、プロンプトキャッシュから読めた割合（トークン量で加重）。
 - **ツールのエラー率**: エラーで返ったツール呼び出しの割合。拒否されたものは含めない。終了コードが 0 以外の Bash（grep で見つからなかった時など）も、ツールの失敗ではなくコマンドの結果なので含めず、件数をタイルに別に出す。
@@ -198,7 +199,7 @@ PR のレビューや feature 開発を、フォルダ（git worktree）ごと�
 - 今開いているリポジトリの git worktree（`git worktree list`）を、メインを先頭に、あとは最近動いた順に並べる。各行に、ブランチ、場所、状態（その worktree の直近のセッション）、費用、セッション数、最後の動き、タスク（完了 / 全体、`doing` の数。dashboard.json が最後の動きより1時間以上古ければ、その時間）、未回答の質問が出る。
   - 「◀ この画面」が、今見ているダッシュボードの worktree。
   - 費用は、その worktree の中で動いたセッションだけ。中にある別の worktree の分は含めない。だから行の費用を足すと、二重にならず合計になる。
-  - タスクと質問は、その worktree の `.dev/dashboard.json` から読む。無ければ「ダッシュボードなし」。ディレクトリが無くなっていて `git worktree prune` の対象なら「ディレクトリなし」。
+  - タスクと質問は、その worktree の `.dev/glass-cockpit/dashboard.json` から読む。無ければ「ダッシュボードなし」。ディレクトリが無くなっていて `git worktree prune` の対象なら「ディレクトリなし」。
 - worktree が1つだけの時と、git のリポジトリでない時は、この段を出さない。
 - `project` を `null` にした（全プロジェクトを集計する）ダッシュボードには出さない。
 - 各 worktree のログを別々に集計するので、worktree が多いと `serve` の再読み込みが遅くなる。

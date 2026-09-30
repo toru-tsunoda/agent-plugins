@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { collect, gitWorktreeInfo, type PriceTable } from "./collect.ts";
+import { dashboardFile } from "./paths.ts";
 
 type Json = Record<string, any>;
 
@@ -21,7 +22,7 @@ export interface WorktreeRow {
   last_activity_at: string | null;
   /** その worktree の直近のセッションの今の状態 */
   state: Json | null;
-  /** その worktree の .dev/dashboard.json。無ければ null */
+  /** その worktree の .dev/glass-cockpit/dashboard.json。無ければ null */
   tasks: { done: number; total: number; doing: number; openQuestions: number; updatedAt: string } | null;
 }
 
@@ -35,7 +36,7 @@ const realpath = (p: string): string => {
 
 function taskSummary(worktree: string): WorktreeRow["tasks"] {
   try {
-    const file = path.join(worktree, ".dev", "dashboard.json");
+    const file = dashboardFile(worktree);
     const d: Json = JSON.parse(fs.readFileSync(file, "utf-8"));
     const tasks: Json[] = d.tasks || [];
     const live = tasks.filter((t) => t.status !== "dropped");

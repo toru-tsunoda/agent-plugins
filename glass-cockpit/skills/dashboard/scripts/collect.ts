@@ -6,7 +6,7 @@
  *   node collect.ts                      # 全プロジェクト
  *   node collect.ts --project ~/src/foo  # 1プロジェクト (サブディレクトリと worktree を含む)
  *   node collect.ts --days 30 --out /tmp/metrics.json
- *   node collect.ts --prices .dev/prices.json   # 料金表を差し替える
+ *   node collect.ts --prices .dev/glass-cockpit/prices.json   # 料金表を差し替える
  *
  * 費用は API 換算 (定額プランでも API 単価で出す)。トークン数 × 単価の概算と、Claude Code が
  * セッションに記録する cost-state のうち大きいほうを使う (概算はタイトル生成などの裏の呼び出しを含まず数%低い)。
@@ -39,7 +39,7 @@ export type Tier = "high" | "low" | "unknown";
 const inferTier = (prefix: string): Tier =>
   /opus|fable|mythos/.test(prefix) ? "high" : /sonnet|haiku/.test(prefix) ? "low" : "unknown";
 
-/** 同梱の料金表。init が .dev/prices.json にコピーして、そちらを最新化する。 */
+/** 同梱の料金表。init が dashboard.json の隣 (.dev/glass-cockpit/prices.json) にコピーして、そちらを最新化する。 */
 export const BUNDLED_PRICES = new URL("../prices.json", import.meta.url).pathname;
 
 /** 料金表を読む。file が無い・壊れている時は同梱のものに戻す。 */
