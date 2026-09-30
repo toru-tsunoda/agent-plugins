@@ -17,10 +17,12 @@ export interface WorktreeRow {
   cost_usd: number;
   sessions: number;
   last_at: string | null;
+  /** 最後にログに書かれた動き (タスクの鮮度に使う) */
+  last_activity_at: string | null;
   /** その worktree の直近のセッションの今の状態 */
   state: Json | null;
   /** その worktree の .dev/dashboard.json。無ければ null */
-  tasks: { done: number; total: number; doing: number; openQuestions: number } | null;
+  tasks: { done: number; total: number; doing: number; openQuestions: number; updatedAt: string } | null;
 }
 
 const realpath = (p: string): string => {
@@ -33,7 +35,8 @@ const realpath = (p: string): string => {
 
 function taskSummary(worktree: string): WorktreeRow["tasks"] {
   try {
-    const d: Json = JSON.parse(fs.readFileSync(path.join(worktree, ".dev", "dashboard.json"), "utf-8"));
+    const file = path.join(worktree, ".dev", "dashboard.json");
+    const d: Json = JSON.parse(fs.readFileSync(file, "utf-8"));
     const tasks: Json[] = d.tasks || [];
     const live = tasks.filter((t) => t.status !== "dropped");
     return {
@@ -41,6 +44,7 @@ function taskSummary(worktree: string): WorktreeRow["tasks"] {
       total: live.length,
       doing: live.filter((t) => t.status === "doing").length,
       openQuestions: (d.questions || []).filter((q: Json) => !q.answer).length,
+      updatedAt: fs.statSync(file).mtime.toISOString(),
     };
   } catch {
     return null;
@@ -90,6 +94,7 @@ export function worktreeRows(opts: {
       cost_usd: m.cost_total_usd,
       sessions: m.sessions,
       last_at: m.latest_session?.last_at ?? null,
+      last_activity_at: m.last_activity_at ?? null,
       state: m.latest_session?.state ?? null,
       tasks: w.prunable ? null : taskSummary(w.path),
     };

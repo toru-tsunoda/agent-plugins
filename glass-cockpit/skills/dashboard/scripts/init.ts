@@ -37,6 +37,8 @@ export function initDashboard(opts: InitOptions): string[] {
     const dashboard = {
       title: `${path.basename(cwd)} 作業ダッシュボード`,
       project: path.relative(dir, cwd) || ".",
+      // レビューゲートは、これより後のスキル実行だけを数える (前の作業の実行で通ったように見せない)
+      created_at: new Date().toISOString(),
       // 上限は親から引き継ぐ。タスクはその worktree の作業で決めるので引き継がない
       cost_cap_usd: parent ? (parent.cost_cap_usd ?? 300) : 300,
       session_cap_usd: parent ? (parent.session_cap_usd ?? 25) : 25,

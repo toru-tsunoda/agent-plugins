@@ -14,14 +14,35 @@ export interface ToolUse {
   sid: string;
   /** サブエージェントのログ (subagents/*.jsonl) の中の呼び出しか */
   sub: boolean;
+  /** 呼び出した時のブランチ (ログの gitBranch。git でない・detached HEAD なら "HEAD" か null) */
+  branch: string | null;
   input: Json;
+}
+
+/** スキルの実行 (Skill ツールか、/skill-name で起動したもの) */
+export interface SkillRun {
+  name: string;
+  ts: string;
+  branch: string | null;
+}
+
+/**
+ * レビューゲートに数えるスキル実行の範囲。前の作業 (別のブランチ・ダッシュボードを作る前) の実行で、
+ * 今の作業のゲートが通ったように見えないようにする。null の条件は絞らない。
+ */
+export interface SkillScope {
+  /** このブランチで実行したものだけ。ブランチの分からない実行 ("HEAD" など) は数えない */
+  branch: string | null;
+  /** この時刻 (UTC の ISO 8601) 以降に実行したものだけ */
+  since: string | null;
 }
 
 export interface ActivityInput {
   toolUses: Map<string, ToolUse>;
   /** tool_use_id -> [is_error, is_denial, 結果の時刻] */
   results: Map<string, [boolean, boolean, string | undefined]>;
-  slashCommands: { name: string; ts: string }[];
+  slashCommands: SkillRun[];
+  skillScope?: SkillScope;
   latestSessionId: string | null;
   latestLastTs: string | null;
   now: number;
@@ -35,7 +56,10 @@ const shortName = (n: string) => n.replace(/^\//, "").split(":").pop() as string
 
 export function summarizeActivity(a: ActivityInput): Json {
   const skills: Record<string, { count: number; last_at: string }> = {};
-  const noteSkill = (name: string, ts: string) => {
+  const scope = a.skillScope;
+  const noteSkill = ({ name, ts, branch }: SkillRun) => {
+    if (scope?.since && ts < scope.since) return;
+    if (scope?.branch && branch !== scope.branch) return;
     const k = shortName(name);
     const cur = skills[k] ?? { count: 0, last_at: "" };
     cur.count++;
@@ -51,7 +75,7 @@ export function summarizeActivity(a: ActivityInput): Json {
   for (const [id, u] of a.toolUses) {
     const res = a.results.get(id);
 
-    if (u.name === "Skill" && u.input.skill) noteSkill(String(u.input.skill), u.ts);
+    if (u.name === "Skill" && u.input.skill) noteSkill({ name: String(u.input.skill), ts: u.ts, branch: u.branch });
 
     if (u.name === "Bash" && CODEX_EXEC.test(String(u.input.command ?? ""))) {
       codex.runs++;
@@ -83,10 +107,11 @@ export function summarizeActivity(a: ActivityInput): Json {
 
     if (u.sid === a.latestSessionId && (lastTool === null || u.ts > lastTool.ts)) lastTool = u;
   }
-  for (const c of a.slashCommands) noteSkill(c.name, c.ts);
+  for (const c of a.slashCommands) noteSkill(c);
 
   return {
     skills,
+    skills_scope: { branch: scope?.branch ?? null, since: scope?.since ?? null },
     codex: {
       runs: codex.runs,
       failures: codex.failures,

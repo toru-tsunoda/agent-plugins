@@ -15,7 +15,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { summarizeActivity, type ToolUse } from "./activity.ts";
+import { summarizeActivity, type SkillRun, type SkillScope, type ToolUse } from "./activity.ts";
 import { readHookState } from "./hookstate.ts";
 import { configDir, expandUser } from "./paths.ts";
 import { sessionState, StateTracker } from "./state.ts";
@@ -74,10 +74,32 @@ const DENIAL_MARKERS = [
   "Permission to use", // 権限ルールで拒否
   "denied by", // 自動モードの分類器・hook
   "<tool_use_error>Blocked", // ハーネスがブロック
+  "The following part requires approval", // 承認の要るコマンドが、承認されずに止まった
+  "The user chose to block", // 権限の設定 (作業ディレクトリの外の読み込みを禁止など)
+  "This session is isolated in the worktree", // worktree の外に出るコマンドを、ハーネスが止めた
 ];
 
 const CONTEXT_MISS_RATIO = 0.5; // 直前の呼び出しの文脈のうち、これ未満しかキャッシュから読めなければ「読み落とし」
 const DEFAULT_CLEANUP_DAYS = 30; // Claude Code の cleanupPeriodDays の既定値
+const CACHE_TTL_5M = 300; // プロンプトキャッシュの寿命 (秒)。1時間のキャッシュを書いたセッションは 3600
+const CACHE_TTL_1H = 3600;
+
+type MissCause = "cache_expired" | "model_changed" | "context_shrunk" | "unexpected";
+
+/**
+ * 読み落としの原因。想定内 (キャッシュの寿命切れ・モデルの変更・compact などで文脈が縮んだ) でなければ unexpected。
+ * unexpected は、システムプロンプトやツールの一覧が途中で変わった時などに起きる。
+ */
+function missCause(
+  prev: { ts: string; model?: string; prompt: number },
+  cur: { ts: string; model?: string; prompt: number },
+  ttlSec: number,
+): MissCause {
+  if (cur.model !== prev.model) return "model_changed";
+  if ((Date.parse(cur.ts) - Date.parse(prev.ts)) / 1000 > ttlSec) return "cache_expired";
+  if (cur.prompt < prev.prompt * CONTEXT_MISS_RATIO) return "context_shrunk";
+  return "unexpected";
+}
 
 export { configDir, expandUser };
 
@@ -168,6 +190,20 @@ export function gitWorktreeInfo(dir: string): WorktreeInfo[] {
 /** git の worktree のパス一覧 */
 export const gitWorktrees = (dir: string): string[] => gitWorktreeInfo(dir).map((w) => w.path);
 
+/** dir の今のブランチ名。detached HEAD・git が無い・リポジトリでない時は null。 */
+export function currentBranch(dir: string): string | null {
+  try {
+    const out = execFileSync("git", ["-C", dir, "symbolic-ref", "--short", "-q", "HEAD"], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5000,
+    });
+    return out.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 const isUnder = (p: string, base: string): boolean => p === base || p.startsWith(base.replace(/\/+$/, "") + path.sep);
 
 /**
@@ -229,6 +265,9 @@ class Session {
   truncated = false; // 集計期間より前の記録を読み飛ばした
   subCost = 0; // subagents/*.jsonl の分 (cost の内数)
   unpricedCalls = 0;
+  unexpectedMisses = 0; // 想定外の読み落とし (サブエージェントの分を含む)
+  model: string | null = null; // メインのエージェントが最後の呼び出しに使ったモデル
+  modelTs = "";
   firstTs: string | null = null;
   lastTs: string | null = null;
   cwd: string | null = null;
@@ -275,13 +314,16 @@ const round4 = (x: number) => Math.round(x * 1e4) / 1e4;
 const RECENT_HOURS = 24;
 const RECENT_MAX = 30;
 
-/** since はログの timestamp と同じ形式 (UTC の ISO 8601、末尾 Z) で渡す。 */
+/**
+ * since はログの timestamp と同じ形式 (UTC の ISO 8601、末尾 Z) で渡す。
+ * opts.gates はレビューゲートに数えるスキル実行の範囲 (activity.ts の SkillScope)。
+ */
 export function collect(
   root: string,
   project: string | null | undefined,
   since: string | null | undefined,
   prices: PriceTable = loadPrices(),
-  opts: { excludeWorktrees?: boolean } = {},
+  opts: { excludeWorktrees?: boolean; gates?: SkillScope } = {},
 ): Json {
   let dirs = listDir(root)
     .map((n) => path.join(root, n))
@@ -317,9 +359,10 @@ export function collect(
   const toolIds = new Set<string>();
   const results = new Map<string, [boolean, boolean, string | undefined]>(); // tool_use_id -> [is_error, is_denial, 結果の時刻]
   const toolUses = new Map<string, ToolUse>(); // tool_use_id -> 呼び出し (最初の1件)
-  const slashCommands: { name: string; ts: string }[] = []; // ユーザーが打ったスラッシュコマンド (/skill-name)
-  const modelStats = new Map<string, { calls: number; cost: number; tier: Tier }>();
-  let contextMisses = 0;
+  const slashCommands: SkillRun[] = []; // ユーザーが打ったスラッシュコマンド (/skill-name)
+  const modelStats = new Map<string, { calls: number; subCalls: number; cost: number; tier: Tier }>();
+  const misses: Record<MissCause, number> = { cache_expired: 0, model_changed: 0, context_shrunk: 0, unexpected: 0 };
+  const exitCodeResults = new Set<string>(); // 「Exit code N」で返った tool_use_id (コマンドは動いて、0 以外で終わった)
   let autoContinues = 0;
   let apiErrors = 0;
 
@@ -378,7 +421,9 @@ export function collect(
           for (const b of m.content || []) {
             if (b && typeof b === "object" && b.type === "tool_use" && b.id) {
               toolIds.add(b.id);
-              if (!toolUses.has(b.id)) toolUses.set(b.id, { name: String(b.name), ts: ts || "", sid, sub: isSub, input: b.input || {} });
+              if (!toolUses.has(b.id)) {
+                toolUses.set(b.id, { name: String(b.name), ts: ts || "", sid, sub: isSub, branch: o.gitBranch ?? null, input: b.input || {} });
+              }
             }
           }
           const mid = m.id || o.requestId;
@@ -393,14 +438,16 @@ export function collect(
             for (const b of content) {
               if (b && typeof b === "object" && b.type === "tool_result" && b.tool_use_id) {
                 const err = Boolean(b.is_error);
-                results.set(b.tool_use_id, [err, err && isDenial(toolResultText(b)), ts]);
+                const text = err ? toolResultText(b) : "";
+                results.set(b.tool_use_id, [err, err && isDenial(text), ts]);
+                if (err && /^\s*Exit code \d+/.test(text)) exitCodeResults.add(b.tool_use_id);
               }
             }
           }
           // /skill-name で起動されたスキル (Skill ツールを通らない)
           const text = typeof content === "string" ? content : Array.isArray(content) ? content.map((b) => b?.text ?? "").join("") : "";
           const cmd = /<command-name>\/?([^<\s]+)<\/command-name>/.exec(text);
-          if (cmd && ts) slashCommands.push({ name: cmd[1], ts });
+          if (cmd && ts) slashCommands.push({ name: cmd[1], ts, branch: o.gitBranch ?? null });
           const origin = o.origin || {};
           const hasToolResult =
             Array.isArray(content) && content.some((b) => b && typeof b === "object" && b.type === "tool_result");
@@ -408,16 +455,27 @@ export function collect(
         }
       }
 
-      let prevPrompt: number | null = null;
+      let prev: { ts: string; model?: string; prompt: number } | null = null;
+      let ttl = CACHE_TTL_5M;
       const ordered = [...seenMsgs.values()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
-      for (const [, model, u] of ordered) {
+      for (const [ts, model, u] of ordered) {
         calls++;
         const read = u.cache_read_input_tokens ?? 0;
         const prompt = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + read;
         tokRead += read;
         tokAll += prompt;
-        if (prevPrompt && read < prevPrompt * CONTEXT_MISS_RATIO) contextMisses++;
-        prevPrompt = prompt;
+        const cur = { ts, model, prompt };
+        if (prev?.prompt && read < prev.prompt * CONTEXT_MISS_RATIO) {
+          const why = missCause(prev, cur, ttl);
+          misses[why]++;
+          if (why === "unexpected") sess.unexpectedMisses++;
+        }
+        if ((u.cache_creation?.ephemeral_1h_input_tokens ?? 0) > 0) ttl = CACHE_TTL_1H;
+        prev = cur;
+        if (!isSub && model && ts >= sess.modelTs) {
+          sess.model = model.split("[")[0];
+          sess.modelTs = ts;
+        }
         const c = callCost(prices, model, u);
         if (c === null) sess.unpricedCalls++;
         else {
@@ -425,8 +483,9 @@ export function collect(
           if (isSub) sess.subCost += c;
         }
         const name = (model || "unknown").split("[")[0];
-        const ms = modelStats.get(name) ?? { calls: 0, cost: 0, tier: priceFor(prices, model)?.tier ?? "unknown" };
+        const ms = modelStats.get(name) ?? { calls: 0, subCalls: 0, cost: 0, tier: priceFor(prices, model)?.tier ?? "unknown" };
         ms.calls++;
+        if (isSub) ms.subCalls++;
         ms.cost += c ?? 0;
         modelStats.set(name, ms);
       }
@@ -449,10 +508,15 @@ export function collect(
     if (latest === null || lastOf(s) > lastOf(latest)) latest = s;
   }
   let errors = 0;
+  let bashExits = 0;
   let denials = 0;
   for (const tid of toolIds) {
     const r = results.get(tid);
-    if (r?.[0] && !r[1]) errors++;
+    // Bash の終了コード 0 以外 (grep で見つからない、diff に差があるなど) は、コマンドの結果なのでエラーとは別に数える
+    if (r?.[0] && !r[1]) {
+      if (toolUses.get(tid)?.name === "Bash" && exitCodeResults.has(tid)) bashExits++;
+      else errors++;
+    }
     if (r?.[1]) denials++;
   }
 
@@ -474,15 +538,21 @@ export function collect(
             title: latest.title,
             branch: latest.branch,
             state: sessionState(latest.main, latest.subs, hooks.get(latest.id) ?? null),
+            model: latest.model,
+            model_tier: latest.model ? (priceFor(prices, latest.model)?.tier ?? "unknown") : null,
+            context_misses: latest.unexpectedMisses,
           },
     models: [...modelStats.entries()]
-      .map(([model, v]) => ({ model, calls: v.calls, cost_usd: round4(v.cost), tier: v.tier }))
+      .map(([model, v]) => ({ model, calls: v.calls, sub_calls: v.subCalls, cost_usd: round4(v.cost), tier: v.tier }))
       .sort((a, b) => b.cost_usd - a.cost_usd || b.calls - a.calls),
     subagent_cost_usd: round4(live.reduce((a, s) => a + s.subCost, 0)),
+    // 最後にログに書かれた発言・ツールの結果 (フックの記録は、セッションを閉じた時なども含むので使わない)。タスクの鮮度に使う
+    last_activity_at: live.reduce<string | null>((a, s) => (a === null || (s.lastTs as string) > a ? s.lastTs : a), null),
     ...summarizeActivity({
       toolUses,
       results,
       slashCommands,
+      skillScope: opts.gates,
       latestSessionId: latest?.id ?? null,
       latestLastTs: latest?.lastTs ?? null,
       now: Date.now(),
@@ -505,7 +575,10 @@ export function collect(
     cache_read_rate: tokAll ? round4(tokRead / tokAll) : null,
     tool_calls: toolIds.size,
     tool_errors: errors,
-    context_misses: contextMisses,
+    bash_nonzero_exits: bashExits,
+    // 想定外の読み落とし。想定内のもの (キャッシュの寿命切れ・モデルの変更・文脈の縮小) は context_misses_expected
+    context_misses: misses.unexpected,
+    context_misses_expected: { cache_expired: misses.cache_expired, model_changed: misses.model_changed, context_shrunk: misses.context_shrunk },
     auto_continues: autoContinues,
     denials,
     api_errors: apiErrors,

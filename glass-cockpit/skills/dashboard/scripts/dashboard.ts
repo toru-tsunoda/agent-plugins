@@ -16,7 +16,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { cleanupPeriodDays, collect, configDir, expandUser, loadPrices, sinceDaysAgo } from "./collect.ts";
+import { cleanupPeriodDays, collect, configDir, currentBranch, expandUser, loadPrices, sinceDaysAgo } from "./collect.ts";
 import { initDashboard, pricesPathFor } from "./init.ts";
 import { worktreeRows, type WorktreeRow } from "./worktrees.ts";
 
@@ -57,7 +57,7 @@ h2 { margin: 0 0 10px; font-size: 17px; }
 .label { color: var(--muted); font-size: 13px; }
 .value { font-size: 30px; font-weight: 700; line-height: 1.25; font-variant-numeric: tabular-nums; }
 .sub { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
-.value.warn { color: var(--warn); } .value.crit { color: var(--crit); }
+.value.warn, .sub.warn { color: var(--warn); } .value.crit { color: var(--crit); }
 .bar { height: 6px; background: var(--track); border-radius: 3px; overflow: hidden; margin-top: 8px; }
 .bar > i { display: block; height: 100%; background: var(--accent); }
 .bar > i.warn { background: var(--warn); } .bar > i.crit { background: var(--crit); }
@@ -97,12 +97,13 @@ details.fold-section > summary .hint.crit { color: var(--crit); }
 details.fold-section > .tiles { margin-top: 12px; }
 .tile.wide { grid-column: span 3; }
 @media (max-width: 900px) { .tile.wide { grid-column: 1 / -1; } }
-.value.small { font-size: 22px; }
+.value.small { font-size: 22px; overflow-wrap: anywhere; }
 .gates { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
 .gate { border: 1px solid var(--line); border-radius: 6px; padding: 2px 10px; font-size: 14px; color: var(--muted); }
 .gate.ok { color: var(--ok); border-color: currentColor; }
 .wt-cur { color: var(--accent); font-size: 13px; margin-left: 6px; }
 .wt-sub { color: var(--muted); font-size: 13px; font-family: var(--mono); }
+.wt-sub.stale { color: var(--warn); font-family: var(--sans); }
 td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .status { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; background: var(--tile); border: 1px solid var(--line); border-left: 6px solid var(--muted); border-radius: 10px; padding: 12px 16px; }
 .status strong { font-size: 20px; color: var(--muted); }
@@ -142,7 +143,8 @@ function localTime(iso?: string | null): string {
 
 const level = (ratio: number): string => (ratio >= 1 ? "crit" : ratio >= 0.8 ? "warn" : "");
 
-function tile(label: string, value: string, sub = "", valueCls = "", bar: number | null = null): string {
+/** note は sub の下に足す1行 ([文言, 色のクラス]) */
+function tile(label: string, value: string, sub = "", valueCls = "", bar: number | null = null, note: [string, string] | null = null): string {
   const barHtml =
     bar === null
       ? ""
@@ -150,17 +152,37 @@ function tile(label: string, value: string, sub = "", valueCls = "", bar: number
   return (
     `<section class="tile"><div class="label">${esc(label)}</div>` +
     `<div class="value ${valueCls}">${esc(value)}</div>` +
-    `<div class="sub">${esc(sub)}</div>${barHtml}</section>`
+    `<div class="sub">${esc(sub)}</div>${note ? `<div class="sub ${note[1]}">${esc(note[0])}</div>` : ""}${barHtml}</section>`
   );
+}
+
+/** dashboard.json が最後の動きからこれ以上更新されていなければ、タスクが古いかもしれないと知らせる */
+const STALE_SEC = 3600;
+
+/** dashboard.json の更新時刻が、最後の動き (ログ) からどれだけ遅れているか。lagSec は、動きの後に更新していれば 0 */
+function staleness(updatedAt: string | null, lastActivity: string | null): { lagSec: number; cls: string } | null {
+  if (!updatedAt || !lastActivity) return null;
+  const lagSec = Math.max(0, (Date.parse(lastActivity) - Date.parse(updatedAt)) / 1000);
+  return { lagSec, cls: lagSec >= STALE_SEC ? "warn" : "" };
+}
+
+function mtimeIso(file: string): string | null {
+  try {
+    return fs.statSync(file).mtime.toISOString();
+  } catch {
+    return null;
+  }
 }
 
 /** 秒を「45秒」「12分」「3時間5分」の形にする */
 function dur(sec: number): string {
   const s = Math.round(sec);
   if (s < 60) return `${s}秒`;
-  if (s < 3600) return `${Math.round(s / 60)}分`;
-  const h = Math.floor(s / 3600);
-  const min = Math.round((s % 3600) / 60);
+  // 分に丸めてから時間に分ける (3599秒を「60分」、3時間の手前を「2時間60分」にしない)
+  const total = Math.round(s / 60);
+  if (total < 60) return `${total}分`;
+  const h = Math.floor(total / 60);
+  const min = total % 60;
   return min ? `${h}時間${min}分` : `${h}時間`;
 }
 
@@ -304,7 +326,13 @@ const DEFAULT_GATES = [
   { label: "sanity-review", skills: ["sanity-review"] },
 ];
 
-function gatesTile(gates: Json[], skills: Record<string, { count: number; last_at: string }>): string {
+/** dashboard.json の created_at を、ログの timestamp と比べられる形 (UTC の ISO 8601) にする。無い・不正なら null */
+function createdAt(dashboard: Json): string | null {
+  const d = new Date(dashboard.created_at ?? NaN);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+function gatesTile(gates: Json[], skills: Record<string, { count: number; last_at: string }>, scope: Json): string {
   const chips = gates
     .map((g) => {
       const hits = (g.skills || []).map((k: string) => skills[k]).filter(Boolean);
@@ -315,7 +343,9 @@ function gatesTile(gates: Json[], skills: Record<string, { count: number; last_a
         : `<span class="gate">– ${esc(g.label)} 未実施</span>`;
     })
     .join("");
-  return `<section class="tile wide"><div class="label">レビューゲート（この期間のスキル実行）</div><div class="gates">${chips}</div></section>`;
+  const range = [scope?.branch ? `ブランチ ${scope.branch}` : "", scope?.since ? `${localTime(scope.since)} 以降` : ""].filter(Boolean);
+  const label = `レビューゲート（スキル実行: ${range.length ? range.join(" · ") : "この期間"}）`;
+  return `<section class="tile wide"><div class="label">${esc(label)}</div><div class="gates">${chips}</div></section>`;
 }
 
 function worktreeSection(rows: WorktreeRow[]): string {
@@ -336,13 +366,15 @@ function worktreeSection(rows: WorktreeRow[]): string {
           ? "ディレクトリなし"
           : "ダッシュボードなし";
       const qs = w.tasks ? (w.tasks.openQuestions ? `<span class="pill warn">${w.tasks.openQuestions}</span>` : "0") : "—";
+      const fresh = staleness(w.tasks?.updatedAt ?? null, w.last_activity_at);
+      const staleHtml = fresh?.cls ? `<div class="wt-sub stale">最後の動きより${esc(dur(fresh.lagSec))}古い</div>` : "";
       return (
         `<tr><td>${esc(name)}${w.isMain ? " (main)" : ""}${w.isCurrent ? '<span class="wt-cur">◀ この画面</span>' : ""}` +
         `<div class="wt-sub">${esc(w.where)}</div></td>` +
         `<td class="pill-cell">${w.state && w.state.kind !== "none" ? (() => { const v = statusView(w.state, Date.now()); return `<span class="pill ${v.cls}">${esc(shortLabel(w.state, v))}</span>`; })() : "—"}</td>` +
         `<td class="num">${usd(w.cost_usd)}</td><td class="num">${w.sessions}</td>` +
         `<td class="num">${w.last_at ? `${esc(localTime(w.last_at))}（${dur((Date.now() - Date.parse(w.last_at)) / 1000)}前）` : "—"}</td>` +
-        `<td>${esc(tasks)}</td><td>${qs}</td></tr>`
+        `<td>${esc(tasks)}${staleHtml}</td><td>${qs}</td></tr>`
       );
     })
     .join("");
@@ -429,7 +461,9 @@ function render(dashboardPath: string, refresh?: number, interactive = false): s
   const [days, daysSource] = cleanupPeriodDays(project);
   const prices = loadPrices(pricesPathFor(dashboardPath));
   const excludeWorktrees = dashboard.exclude_worktrees !== false;
-  const m = collect(path.join(configDir(), "projects"), project, sinceDaysAgo(days), prices, { excludeWorktrees });
+  // レビューゲートは今の作業の分だけ数える: 今のブランチで、ダッシュボードを作った後に実行したスキル
+  const gates = { branch: project ? currentBranch(project) : null, since: createdAt(dashboard) };
+  const m = collect(path.join(configDir(), "projects"), project, sinceDaysAgo(days), prices, { excludeWorktrees, gates });
 
   const worktrees = worktreeRows({
     project,
@@ -454,10 +488,22 @@ function render(dashboardPath: string, refresh?: number, interactive = false): s
     .map((s) => `${s === "dropped" ? "やらない" : s} ${counts[s]}`)
     .join(" · ");
   const errRate = m.tool_calls ? m.tool_errors / m.tool_calls : null;
+  const expected: Json = m.context_misses_expected ?? {};
+  const latestMisses: number = m.latest_session?.context_misses ?? 0;
   const retention = `cleanupPeriodDays ${days}` + (daysSource === null ? "（既定値）" : "");
   const costSub = (costCap ? `上限 ${usd(costCap)} · ` : "") + retention;
   const n = (x: number) => x.toLocaleString("en-US");
   const latestId: string = (latest.id || "—").slice(0, 8);
+  // タスクの鮮度: AI が動いた後に dashboard.json を更新していなければ、表のタスクは古いかもしれない
+  const updatedAt = mtimeIso(dashboardPath);
+  const fresh = staleness(updatedAt, m.last_activity_at);
+  const freshNote: [string, string] | null = updatedAt
+    ? [
+        `dashboard.json 更新 ${localTime(updatedAt)}` +
+          (fresh === null ? "" : fresh.lagSec < 60 ? "（最新）" : ` · 最後の動きより${dur(fresh.lagSec)}古い`),
+        fresh?.cls ?? "",
+      ]
+    : null;
 
   const tiles = [
     tile(`費用（API 換算、${days}日以内）`, usd(m.cost_total_usd), costSub, "", costCap ? m.cost_total_usd / costCap : null),
@@ -469,10 +515,21 @@ function render(dashboardPath: string, refresh?: number, interactive = false): s
       sessionCap ? (latest.cost_usd ?? 0) / sessionCap : null,
     ),
     tile("キャッシュ読み込み率", pct(m.cache_read_rate), `${n(m.api_calls)} 回の呼び出し（トークン加重）`),
-    tile("ツールのエラー率", pct(errRate), `${n(m.tool_errors)} / ${n(m.tool_calls)} 件`),
-    tile("文脈の読み落とし", n(m.context_misses), "前の呼び出しの文脈を半分未満しか読めなかった回", m.context_misses ? "crit" : ""),
+    tile("ツールのエラー率", pct(errRate), `${n(m.tool_errors)} / ${n(m.tool_calls)} 件`, "", null, [
+      `Bash の終了コード 0 以外 ${n(m.bash_nonzero_exits ?? 0)} 件は除く`,
+      "",
+    ]),
+    // 想定外の読み落としだけを数え、色は直近のセッションで起きた時だけ付ける (30日の累計で常に赤くしない)
+    tile(
+      "文脈の読み落とし",
+      n(m.context_misses),
+      `キャッシュ切れ ${n(expected.cache_expired ?? 0)} · モデル変更 ${n(expected.model_changed ?? 0)} · 縮小 ${n(expected.context_shrunk ?? 0)} は除く`,
+      latestMisses ? "warn" : "",
+      null,
+      latestMisses ? [`直近のセッションで ${n(latestMisses)} 回`, "warn"] : null,
+    ),
     tile("自動続行", n(m.auto_continues), `拒否 ${n(m.denials)} · API エラー ${n(m.api_errors)}`),
-    tile("タスク", `${counts.done} / ${tasks.length - counts.dropped}`, taskSub),
+    tile("タスク", `${counts.done} / ${tasks.length - counts.dropped}`, taskSub, "", null, freshNote),
     tile("未回答の質問", String(openQs.length), `回答済み ${answered.length}`, openQs.length ? "warn" : ""),
   ];
 
@@ -486,14 +543,18 @@ function render(dashboardPath: string, refresh?: number, interactive = false): s
   const lastToolTile = tile("最後のツール", act.last_tool?.name ?? "—", act.last_tool ? `${localTime(act.last_tool.at)} · ${act.last_tool.detail || "—"}` : "", "small");
   const subTypes = Object.entries(sub.by_type ?? {}).map(([k, v]) => `${k} ${v}`).join(" · ");
   const subShare = m.cost_total_usd ? Math.round((m.subagent_cost_usd / m.cost_total_usd) * 100) : 0;
-  const lowCalls = models.filter((x) => x.tier === "low").reduce((a, x) => a + x.calls, 0);
-  const topModels = models.slice(0, 3).map((x) => `${x.model} ${n(x.calls)}`).join(" · ");
-  // 閉じていても見える要約。異常（Opus 未満・Codex 失敗）だけ色を付ける。今の状態はヘッダーに出す
+  // Opus 未満は、メインのエージェントとサブエージェントに分ける。Explore などのサブエージェントが Haiku を使うのは普通なので、
+  // 警告は直近のセッションのメインのエージェントが今 Opus 未満で動いている時だけにする
+  const low = models.filter((x) => x.tier === "low");
+  const lowSub = low.reduce((a, x) => a + (x.sub_calls ?? 0), 0);
+  const lowMain = low.reduce((a, x) => a + x.calls, 0) - lowSub;
+  const latestLow = latest.model_tier === "low";
+  // 閉じていても見える要約。異常（直近のセッションが Opus 未満・Codex 失敗）だけ色を付ける。今の状態はヘッダーに出す
   const hints: [string, string][] = [
     [`サブエージェント ${n(sub.calls ?? 0)}`, ""],
     [`Codex ${n(codex.runs ?? 0)}${codex.failures ? `（失敗 ${n(codex.failures)}）` : ""}`, codex.failures ? "warn" : ""],
   ];
-  if (lowCalls) hints.push([`Opus 未満 ${n(lowCalls)} 回`, "warn"]);
+  if (latestLow) hints.push([`直近のセッションが Opus 未満（${latest.model}）`, "warn"]);
   const activitySummary = hints.map(([t, c]) => `<span class="hint ${c}">${esc(t)}</span>`).join("");
   const activityTiles = [
     lastToolTile,
@@ -505,8 +566,13 @@ function render(dashboardPath: string, refresh?: number, interactive = false): s
       `失敗 ${n(codex.failures ?? 0)} · 最長 ${dur(codex.longest_sec ?? 0)}`,
       codex.failures ? "warn" : "",
     ),
-    tile("モデル", lowCalls ? `Opus 未満 ${n(lowCalls)} 回` : models.length ? "Opus 以上のみ" : "—", topModels, lowCalls ? "warn" : "small"),
-    gatesTile(Array.isArray(dashboard.gates) ? dashboard.gates : DEFAULT_GATES, m.skills ?? {}),
+    tile(
+      "モデル（直近のセッション）",
+      latest.model ?? "—",
+      `Opus 未満: メイン ${n(lowMain)} 回 · サブエージェント ${n(lowSub)} 回`,
+      latestLow ? "small warn" : "small",
+    ),
+    gatesTile(Array.isArray(dashboard.gates) ? dashboard.gates : DEFAULT_GATES, m.skills ?? {}, m.skills_scope),
   ];
 
   // 進行中 → todo（先頭だけ）→ 残りの todo・完了・やらない（折りたたみ）
