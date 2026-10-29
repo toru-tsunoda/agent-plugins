@@ -1,3 +1,2 @@
 .dev/
-.claude/*
-!.claude/settings.json
+.claude/

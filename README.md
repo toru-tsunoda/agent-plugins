@@ -102,17 +102,23 @@ clone したリポジトリを、ローカルのマーケットプレイスと�
 
 ### このリポジトリ自身で使う（ドッグフーディング）
 
-このリポジトリの `.claude/settings.json` で、GitHub の `toru-tsunoda/agent-plugins` をマーケットプレイスとして登録し、glass-cockpit を有効にしています。手元でもクラウドのセッションでも、このリポジトリを開けば、`main` の版の glass-cockpit が使えます（`autoUpdate` が `true` なので、`version` を上げてマージすると届きます）。
+このリポジトリには、プラグインを入れる設定（`.claude/settings.json`）をコミットしていません。clone した人にインストールを勧める表示は出ません。使いたい環境でだけ、明示的に入れます。
 
-ブランチで編集中の版を手元で試す時は、`.claude/settings.local.json`（コミットしない）で `main` の版を止めてから、`--plugin-dir` で読み込みます。両方を読み込むと、フックが2回動きます。
+手元の PC では、Claude Code で次を実行します。
 
-```json
-{
-  "enabledPlugins": {
-    "glass-cockpit@enokizako-agent-plugins": false
-  }
-}
+```bash
+/plugin marketplace add toru-tsunoda/agent-plugins
+/plugin install glass-cockpit@enokizako-agent-plugins
 ```
+
+クラウドのセッション（Claude Code on the web）では、クラウド環境のセットアップスクリプトに次を書くと、セッションを始めるたびに入ります。
+
+```bash
+claude plugin marketplace add toru-tsunoda/agent-plugins
+claude plugin install glass-cockpit@enokizako-agent-plugins
+```
+
+どちらも `main` の版が入ります。ブランチで編集中の版を試す時は、入れた版を止めてから（`/plugin` で Disable）、`--plugin-dir` で読み込みます。両方を読み込むと、フックが2回動きます。
 
 ```bash
 claude --plugin-dir ./glass-cockpit
