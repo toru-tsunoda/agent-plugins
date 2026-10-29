@@ -1,0 +1,13 @@
+{
+  "extraKnownMarketplaces": {
+    "enokizako-agent-plugins": {
+      "source": {
+        "source": "directory",
+        "path": "/home/user/agent-plugins"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "glass-cockpit@enokizako-agent-plugins": true
+  }
+}
