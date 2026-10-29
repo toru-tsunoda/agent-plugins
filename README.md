@@ -100,6 +100,30 @@ clone したリポジトリを、ローカルのマーケットプレイスと�
 /plugin install glass-cockpit@enokizako-agent-plugins
 ```
 
+### このリポジトリ自身で使う（ドッグフーディング）
+
+このリポジトリには、プラグインを入れる設定（`.claude/settings.json`）をコミットしていません。clone した人にインストールを勧める表示は出ません。使いたい環境でだけ、明示的に入れます。
+
+手元の PC では、Claude Code で次を実行します。
+
+```bash
+/plugin marketplace add toru-tsunoda/agent-plugins
+/plugin install glass-cockpit@enokizako-agent-plugins
+```
+
+クラウドのセッション（Claude Code on the web）では、クラウド環境のセットアップスクリプトに次を書くと、セッションを始めるたびに入ります。
+
+```bash
+claude plugin marketplace add toru-tsunoda/agent-plugins
+claude plugin install glass-cockpit@enokizako-agent-plugins
+```
+
+どちらも `main` の版が入ります。ブランチで編集中の版を試す時は、入れた版を止めてから（`/plugin` で Disable）、`--plugin-dir` で読み込みます。両方を読み込むと、フックが2回動きます。
+
+```bash
+claude --plugin-dir ./glass-cockpit
+```
+
 リリースする時は、プラグインの `.claude-plugin/plugin.json` の `version` を上げます。**上げないと、コードを変えても利用者には届きません**。`version` は `plugin.json` にだけ書き、`.claude-plugin/marketplace.json` には書きません（両方にあると `plugin.json` が使われ、食い違いに気づきにくいため）。
 
 マニフェストは次のコマンドで確かめられます。
