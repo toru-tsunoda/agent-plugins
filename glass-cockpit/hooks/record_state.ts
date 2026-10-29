@@ -2,11 +2,14 @@
 /**
  * 状態記録フック: ツールの開始・終了、権限の確認、ターンの終了などを、セッションごとの JSONL に1行ずつ足す。
  * ダッシュボードはこれを畳み込んで「今の状態」を出す (skills/dashboard/scripts/hookstate.ts)。
+ * dashboard.json で "cloud_view": true にしたプロジェクトでは、共有フォルダへのダッシュボードの書き出しも起こす (cloudview.ts)。
  * 何があっても exit 0 で終わり、何も出力しない (Claude の動作を変えない)。
  */
 import fs from "node:fs";
 import path from "node:path";
+import { scheduleCloudView } from "../skills/dashboard/scripts/cloudview.ts";
 import { hookStateFile, pruneHookStates, type HookLine } from "../skills/dashboard/scripts/hookstate.ts";
+import { dashboardFile } from "../skills/dashboard/scripts/paths.ts";
 import { toolDetail } from "../skills/dashboard/scripts/state.ts";
 
 try {
@@ -33,6 +36,9 @@ try {
     } finally {
       fs.closeSync(fd);
     }
+    // 今の状態が変わったので、クラウドで見ている人のために書き出し直す (裏で動き、フックは待たない)
+    const root = [e.cwd, process.env.CLAUDE_PROJECT_DIR].find((d) => d && fs.existsSync(dashboardFile(d)));
+    if (root) scheduleCloudView(dashboardFile(root));
     if (ev === "SessionEnd") {
       // 集計のモジュールは重いので、掃除する時だけ読む
       const { cleanupPeriodDays } = await import("../skills/dashboard/scripts/collect.ts");

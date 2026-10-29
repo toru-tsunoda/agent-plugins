@@ -5,6 +5,8 @@
  *   node dashboard.ts init     # カレントディレクトリに .dev/glass-cockpit/dashboard.json を作る
  *   node dashboard.ts build    # .dev/glass-cockpit/dashboard.html を書き出す
  *   node dashboard.ts serve    # http://127.0.0.1:8765 で開く。開くたびに集計し直し、30秒ごとに再読み込み
+ *   node dashboard.ts export   # クラウドのセッションで、プロジェクトの共有フォルダに HTML を書き出す (cloudview.ts)
+ *   node dashboard.ts viewer   # 共有フォルダの HTML を読んで表示する、Artifact 用のページを書き出す (viewer.ts)
  *
  * dashboard.json は AI が作業しながら書き換える前提 (タスクの状態、質問の追加、回答の記入)。
  * 料金表は dashboard.json の隣の prices.json (init が同梱のものをコピーする。無ければ同梱のものを使う)。
@@ -17,8 +19,10 @@ import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { cleanupPeriodDays, collect, configDir, currentBranch, expandUser, loadPrices, sinceDaysAgo } from "./collect.ts";
+import { clearPending, cloudViewRelPath, cloudViewTarget, writeCloudView } from "./cloudview.ts";
 import { initDashboard, pricesPathFor } from "./init.ts";
 import { DASHBOARD_DIR } from "./paths.ts";
+import { viewerHtml } from "./viewer.ts";
 import { worktreeRows, type WorktreeRow } from "./worktrees.ts";
 
 type Json = Record<string, any>;
@@ -627,6 +631,7 @@ function render(dashboardPath: string, refresh?: number, interactive = false): s
   return `<!doctype html>
 <html lang="ja"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="glass-cockpit-collected-at" content="${esc(m.collected_at)}">
 <title>[${esc(status.label)}] ${title}</title><style>${CSS}</style></head>
 <body><main>
 <header><h1>${title}</h1><span class="meta">${meta}</span></header>
@@ -656,6 +661,32 @@ function cmdInit(dashboardPath: string): number {
 function cmdBuild(dashboardPath: string, out?: string): number {
   const dest = out || path.join(path.dirname(path.resolve(dashboardPath)), "dashboard.html");
   fs.writeFileSync(dest, render(dashboardPath), "utf-8");
+  console.log(dest);
+  return 0;
+}
+
+async function cmdExport(dashboardPath: string, delayMs: number): Promise<number> {
+  if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
+  clearPending(dashboardPath);
+  const target = cloudViewTarget(dashboardPath);
+  if (!target) {
+    console.error(`書き出しません: ${dashboardPath} に "cloud_view": true が無いか、共有フォルダが無い`);
+    return 1;
+  }
+  writeCloudView(target, render(dashboardPath));
+  console.log(target);
+  return 0;
+}
+
+function cmdViewer(dashboardPath: string, out?: string): number {
+  const dest = out || path.join(path.dirname(path.resolve(dashboardPath)), "viewer.html");
+  let title = "作業ダッシュボード";
+  try {
+    title = JSON.parse(fs.readFileSync(dashboardPath, "utf-8")).title || title;
+  } catch {
+    // タイトルが読めなくても、ページは作れる
+  }
+  fs.writeFileSync(dest, viewerHtml(cloudViewRelPath(dashboardPath), title), "utf-8");
   console.log(dest);
   return 0;
 }
@@ -742,16 +773,19 @@ async function main(): Promise<number> {
       host: { type: "string", default: "127.0.0.1" },
       port: { type: "string", default: "8765" },
       refresh: { type: "string", default: "30" },
+      delay: { type: "string", default: "0" },
       help: { type: "boolean", short: "h" },
     },
   });
   const cmd = positionals[0];
-  if (a.help || !["init", "build", "serve"].includes(cmd)) {
+  if (a.help || !["init", "build", "serve", "export", "viewer"].includes(cmd)) {
     console.error(
-      "usage: node dashboard.ts {init|build|serve} [--dashboard PATH] [--out FILE] [--host H] [--port N] [--refresh SEC]\n" +
+      "usage: node dashboard.ts {init|build|serve|export|viewer} [--dashboard PATH] [--out FILE] [--host H] [--port N] [--refresh SEC]\n" +
         `  init   カレントディレクトリに ${DASHBOARD_DIR}/ を作り、dashboard.json と prices.json を置く\n` +
         `  build  dashboard.json の隣に dashboard.html を書き出す (--out で変更)\n` +
         `  serve  HTTP で配信し、開くたびに集計し直す (--host, --port, --refresh)\n` +
+        `  export クラウドのセッションで、プロジェクトの共有フォルダに HTML を書き出す ("cloud_view": true の時だけ)\n` +
+        `  viewer 共有フォルダの HTML を読んで表示する Artifact 用のページを、dashboard.json の隣に書き出す (--out で変更)\n` +
         `  --dashboard の既定: ${DEFAULT_DASHBOARD}`,
     );
     return a.help ? 0 : 2;
@@ -759,6 +793,8 @@ async function main(): Promise<number> {
   const dashboard = a.dashboard as string;
   if (cmd === "init") return cmdInit(dashboard);
   if (cmd === "build") return cmdBuild(dashboard, a.out);
+  if (cmd === "export") return cmdExport(dashboard, Number.parseInt(a.delay as string, 10) || 0);
+  if (cmd === "viewer") return cmdViewer(dashboard, a.out);
   return cmdServe(dashboard, a.host as string, Number.parseInt(a.port as string, 10), Number.parseInt(a.refresh as string, 10));
 }
 
