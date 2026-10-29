@@ -20,6 +20,7 @@ import { readHookState } from "./hookstate.ts";
 import { configDir, expandUser } from "./paths.ts";
 import { runningSessions } from "./running.ts";
 import { sessionState, StateTracker } from "./state.ts";
+import { UsageTally } from "./usage.ts";
 
 type Json = Record<string, any>;
 
@@ -366,6 +367,7 @@ export function collect(
   const exitCodeResults = new Set<string>(); // 「Exit code N」で返った tool_use_id (コマンドは動いて、0 以外で終わった)
   let autoContinues = 0;
   let apiErrors = 0;
+  const usage = new UsageTally(); // 日・モデル・エフォートごとの利用 (グラフ用)
 
   for (const d of dirs) {
     // メインのセッションと、その下の subagents/*.jsonl
@@ -386,7 +388,7 @@ export function collect(
         sess = new Session(sid, path.basename(d));
         sessions.set(sid, sess);
       }
-      const seenMsgs = new Map<string, [string, string | undefined, Json]>();
+      const seenMsgs = new Map<string, [string, string | undefined, Json, string | undefined, string | undefined]>(); // [時刻, モデル, usage, 頼んだモデル, エフォート]
       const tracker = new StateTracker();
       if (isSub) sess.subs.push(tracker);
       else sess.main = tracker;
@@ -430,7 +432,7 @@ export function collect(
           const mid = m.id || o.requestId;
           const u = m.usage;
           if (!mid || !u || m.model === "<synthetic>" || seenMsgs.has(mid)) continue;
-          seenMsgs.set(mid, [ts || "", m.model, u]);
+          seenMsgs.set(mid, [ts || "", m.model, u, o.requestedModel, o.perTurnEffort ?? o.effort]);
         } else if (t === "user") {
           sess.touch(ts);
           const m = o.message || {};
@@ -459,7 +461,7 @@ export function collect(
       let prev: { ts: string; model?: string; prompt: number } | null = null;
       let ttl = CACHE_TTL_5M;
       const ordered = [...seenMsgs.values()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
-      for (const [ts, model, u] of ordered) {
+      for (const [ts, model, u, requested, effort] of ordered) {
         calls++;
         const read = u.cache_read_input_tokens ?? 0;
         const prompt = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + read;
@@ -489,6 +491,7 @@ export function collect(
         if (isSub) ms.subCalls++;
         ms.cost += c ?? 0;
         modelStats.set(name, ms);
+        usage.add({ ts, model, requested, effort, sub: isSub, cost: c, usage: u });
       }
     }
   }
@@ -551,6 +554,7 @@ export function collect(
     models: [...modelStats.entries()]
       .map(([model, v]) => ({ model, calls: v.calls, sub_calls: v.subCalls, cost_usd: round4(v.cost), tier: v.tier }))
       .sort((a, b) => b.cost_usd - a.cost_usd || b.calls - a.calls),
+    usage: usage.summary(),
     subagent_cost_usd: round4(live.reduce((a, s) => a + s.subCost, 0)),
     // 最後にログに書かれた発言・ツールの結果 (フックの記録は、セッションを閉じた時なども含むので使わない)。タスクの鮮度に使う
     last_activity_at: live.reduce<string | null>((a, s) => (a === null || (s.lastTs as string) > a ? s.lastTs : a), null),
