@@ -2,9 +2,10 @@
   "extraKnownMarketplaces": {
     "enokizako-agent-plugins": {
       "source": {
-        "source": "directory",
-        "path": "/home/user/agent-plugins"
-      }
+        "source": "github",
+        "repo": "toru-tsunoda/agent-plugins"
+      },
+      "autoUpdate": true
     }
   },
   "enabledPlugins": {

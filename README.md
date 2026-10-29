@@ -100,6 +100,24 @@ clone したリポジトリを、ローカルのマーケットプレイスと�
 /plugin install glass-cockpit@enokizako-agent-plugins
 ```
 
+### このリポジトリ自身で使う（ドッグフーディング）
+
+このリポジトリの `.claude/settings.json` で、GitHub の `toru-tsunoda/agent-plugins` をマーケットプレイスとして登録し、glass-cockpit を有効にしています。手元でもクラウドのセッションでも、このリポジトリを開けば、`main` の版の glass-cockpit が使えます（`autoUpdate` が `true` なので、`version` を上げてマージすると届きます）。
+
+ブランチで編集中の版を手元で試す時は、`.claude/settings.local.json`（コミットしない）で `main` の版を止めてから、`--plugin-dir` で読み込みます。両方を読み込むと、フックが2回動きます。
+
+```json
+{
+  "enabledPlugins": {
+    "glass-cockpit@enokizako-agent-plugins": false
+  }
+}
+```
+
+```bash
+claude --plugin-dir ./glass-cockpit
+```
+
 リリースする時は、プラグインの `.claude-plugin/plugin.json` の `version` を上げます。**上げないと、コードを変えても利用者には届きません**。`version` は `plugin.json` にだけ書き、`.claude-plugin/marketplace.json` には書きません（両方にあると `plugin.json` が使われ、食い違いに気づきにくいため）。
 
 マニフェストは次のコマンドで確かめられます。
