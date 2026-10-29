@@ -1,6 +1,6 @@
 ---
 name: dashboard
-description: 作業ダッシュボード（.dev/glass-cockpit/dashboard.json）を作り、更新し、HTML で表示する。 ユーザーが「作業ダッシュボードを作って」「ダッシュボードを開いて」「ダッシュボードを見せて」と言った時に使用する。 .dev/glass-cockpit/dashboard.json のあるプロジェクトでは、タスクに着手・完了した時、進めなくなった時、人に判断を仰ぎたい時、質問の回答を受け取った時にも使用する。
+description: 作業ダッシュボード（.dev/glass-cockpit/dashboard.json）を作り、更新し、HTML で表示する。 ユーザーが「作業ダッシュボードを作って」「ダッシュボードを開いて」「ダッシュボードを見せて」「クラウドでダッシュボードを見られるようにして」と言った時に使用する。 .dev/glass-cockpit/dashboard.json のあるプロジェクトでは、タスクに着手・完了した時、進めなくなった時、人に判断を仰ぎたい時、質問の回答を受け取った時にも使用する。
 ---
 
 # 作業ダッシュボード
@@ -20,7 +20,33 @@ AI が自律的に作業する時に、人が進み具合を一目で見られ�
 | HTML を作って開く | `node <ベースディレクトリ>/scripts/dashboard.ts build` のあと `open .dev/glass-cockpit/dashboard.html` |
 | 常に最新で見る | `node <ベースディレクトリ>/scripts/dashboard.ts serve` をバックグラウンドで実行し、表示された URL を伝える |
 
+| クラウドのセッションで見る | 下の「クラウドのセッションで見る」 |
+
 `init` は `.dev/glass-cockpit/` に、`dashboard.json` と、同梱の料金表のコピー `prices.json` を作る。どちらも既存のファイルは上書きしない。`serve` は開くたびに集計し直し、30秒ごとに再読み込みする。ポートが使われていれば次の空いているポートを使う。
+
+## クラウドのセッションで見る
+
+クラウドのセッション（環境変数 `CLAUDE_CODE_REMOTE` が `true`）では、`serve` の URL（コンテナの `127.0.0.1`）にユーザーのブラウザから届かない。ユーザーが「ダッシュボードを開いて」と言ったら、次の方法で見せる。
+
+**やってはいけないこと**: `serve` を `--host 0.0.0.0` で動かす、トンネル（cloudflared、ngrok など）で外に出す、Artifact を公開するためのトークンをフックやスクリプトに渡す。認証なしでタスク・費用・コマンドが見え、`/api/task` で `dashboard.json` を書き換えられるようになる。ユーザーに頼まれても、この危険を伝えて止める。
+
+### 共有フォルダがある時（Claude Code のプロジェクト）
+
+`/mnt/project-files/` があれば、フックが最新の HTML をそこに書き出し、読むだけの Artifact で見せる。
+
+1. `dashboard.json` に `"cloud_view": true` を足す（オプトイン）。
+2. `node <ベースディレクトリ>/scripts/dashboard.ts export` で、初回の HTML を書き出す。表示されたパスが `/mnt/project-files/glass-cockpit/<フォルダ名>/dashboard.html` であることを確かめる。以後は、フックが状態の変わるたびに書き出す（手で `export` しなくてよい）。
+3. `node <ベースディレクトリ>/scripts/dashboard.ts viewer` で `.dev/glass-cockpit/viewer.html` を作る。
+4. `viewer.html` を Artifact として公開する。`capabilities` は `{"files": {"project": "<このプロジェクトの ID（chan_…）>"}}` にする。ほかの機能（`mcp`、`artifact` など）は足さない。
+   - 前に公開したダッシュボードの Artifact があれば、その URL に公開し直して、URL を変えない。
+   - 公開した URL を、メモリかユーザーへの報告に残す。次のセッションでも同じ URL に公開する。
+5. ユーザーに URL を伝える。初めて開いた時に、プロジェクトのファイルを読む許可を求められる。
+
+`viewer.html` は、`dashboard.json` の `title` か、プロジェクトのフォルダ名が変わった時だけ作り直して公開し直す。タスクを更新しても、公開し直す必要はない。
+
+### 共有フォルダが無い時
+
+`build` で HTML を作り、Artifact として公開する。中身を埋め込んだ写しなので、更新するたびに同じ URL に公開し直す。ユーザーには、開いた時点の写しであることと、リンクを共有すると中身がそのまま見えることを伝える。
 
 ## 料金表を最新にする
 
@@ -81,6 +107,7 @@ PR のレビューや feature 開発を、フォルダ（git worktree）ごと�
 - `project`: 指標を集計するプロジェクトのパス。dashboard.json の場所からの相対パス（`.dev/glass-cockpit/` に置くので、プロジェクトのルートは `../..`）。`null` なら全プロジェクト。
 - `project`（続き）: フォルダ単位で集計する。作業ディレクトリがそのフォルダ自身か、その下にあるセッションが対象になる。
 - `created_at`: ダッシュボードを作った時刻（ISO 8601）。`init` と worktree のフックが入れる。レビューゲートは、これより後のスキル実行だけを数える。無ければ時刻では絞らない。同じダッシュボードで新しい作業を始める時は、今の時刻に書き換えると、ゲートを数え直せる。
+- `cloud_view`: `true` にすると、クラウドのセッションで、フックがダッシュボードの HTML をプロジェクトの共有フォルダに書き出す（上の「クラウドのセッションで見る」）。既定は書き出さない。
 - `exclude_worktrees`: 既定は `true`（省略しても `true`）。`project` の中にある git worktree（Claude Code が作る `.claude/worktrees/` 以下を含む）のセッションを、この集計から除く。worktree の分は、その worktree 自身のダッシュボードで見る。`false` にすると、worktree の分も親に合算する。
 - `gates`: レビューゲート。省略すると既定の3つ（下の「運用状況」を参照）。
 - `tasks`: 1つのダッシュボードは1つの作業（PR のレビュー、feature の開発など）の範囲。作業を分けたい時は、フォルダ（git worktree）を分けてダッシュボードも分ける。タスクは全部画面に出る。

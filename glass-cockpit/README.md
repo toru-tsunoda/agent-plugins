@@ -51,6 +51,21 @@ Claude Code に大きな作業を任せると、人には次のことが分か�
 
 常に最新で見たい時は、「ダッシュボードを serve で開いて」と伝えます。`http://127.0.0.1:8765` で配信し、30 秒ごとに集計し直します。この画面では、タスクを「やめる」ボタンで「やらない」に消し込めます。「やらない」にしたタスクは、Claude が着手しません。
 
+### クラウドのセッションで見る
+
+Claude Code on the web などクラウドのセッションでは、`serve` はコンテナの中の `127.0.0.1` で動くので、手元のブラウザから届きません。Claude Code のプロジェクト（共有フォルダ `/mnt/project-files/` があるセッション）なら、「クラウドでダッシュボードを見られるようにして」と伝えると、次の仕組みで最新の状態を見られます。
+
+1. Claude が `dashboard.json` に `"cloud_view": true` を書きます（オプトイン。書かなければ何もしません）
+2. フックが、今の状態が変わるたびに（続けて来た分は2秒まとめて）ダッシュボードの HTML を作り、共有フォルダの `glass-cockpit/<フォルダ名>/dashboard.html` に書き出します
+3. Claude が、その HTML を読むだけのページを Artifact として公開します。開いた人自身の権限でファイルを読み、20 秒ごとに読み直します。URL は変わらないので、一度開けば最新の状態が出続けます
+
+安全のため、次のようにしています。
+
+- コンテナのポートを外に開けません（トンネルなども使いません）。開けると、認証なしでタスクや費用が見え、`serve` の書き込みの API で `dashboard.json` を書き換えられてしまうためです
+- 新しい認証情報も使いません。読めるのは、そのプロジェクトのファイルを開ける人だけです。Artifact のページ自体はダッシュボードの中身を持たないので、リンクが渡っても、プロジェクトに入れない人には何も見えません
+- 表示は読むだけです。タスクを「やめる」ボタンは出ません。読んだ HTML は、Artifact の機能に届かない sandbox の iframe に入れます
+- コマンドは、説明が無い時に1行目が「直近のセッション」の行に出ます（`serve` や `build` と同じ）。秘密の値をコマンドに直接書かないでください
+
 ## 画面の見方
 
 ### ヘッダーの帯（今の状態）
@@ -88,10 +103,12 @@ Claude Code に大きな作業を任せると、人には次のことが分か�
 | `.dev/glass-cockpit/dashboard.json` | タスクと質問。Claude が書き換えます |
 | `.dev/glass-cockpit/prices.json` | 料金表（モデルごとの単価） |
 | `.dev/glass-cockpit/dashboard.html` | 表示用の HTML。手で編集しません |
+| `.dev/glass-cockpit/viewer.html` | クラウドで見るための、Artifact 用のページ（`"cloud_view": true` の時だけ） |
+| `/mnt/project-files/glass-cockpit/<フォルダ名>/dashboard.html` | クラウドで見るために書き出した HTML（`"cloud_view": true` の時だけ） |
 | `~/.claude/glass-cockpit/sessions/<セッション ID>.jsonl` | フックが記録するセッションの出来事（今の状態の判定に使います） |
 
 - フックは、ダッシュボードの無いプロジェクトも含め、プラグインを読み込んだすべてのセッションで記録します。`cleanupPeriodDays`（既定 30 日）より古い記録は消します
-- 指標は、Claude Code が手元に残すセッションログを読んで集計します。集計した内容を外に送ることはありません。`serve` は、既定では自分の PC（`127.0.0.1`）からだけ開けます
+- 指標は、Claude Code が手元に残すセッションログを読んで集計します。集計した内容を外に送ることはありません（`"cloud_view": true` の時だけ、プロジェクトの共有フォルダに書き出します）。`serve` は、既定では自分の PC（`127.0.0.1`）からだけ開けます
 
 `dashboard.json` の形式は [SKILL.md](skills/dashboard/SKILL.md#dashboardjson-の形式) を参照してください。
 
@@ -101,6 +118,7 @@ Claude Code に大きな作業を任せると、人には次のことが分か�
 
 - 「ダッシュボードを開いて」で開いた HTML は、開いた時点のままです。最新で見るには `serve` で開きます
 - プラグインを更新した後は、動いている `serve` を止めて起動し直してください。起動し直すまで古い版のまま動きます
+- クラウドで見ている Artifact は、セッションが動いた時にだけ書き出し直されます。Claude が入力を待っている間や、セッションが終わった後は、最後の状態のままです。上の帯に、集計した時刻が出ます
 
 ### タスクの表が今の作業と合っていない
 
@@ -126,6 +144,8 @@ Claude に頼まずに動かす時は、ダッシュボードを置くプロジ�
 node <このフォルダ>/skills/dashboard/scripts/dashboard.ts init   # .dev/glass-cockpit/ に dashboard.json と prices.json を作る
 node <このフォルダ>/skills/dashboard/scripts/dashboard.ts build  # .dev/glass-cockpit/dashboard.html を書き出す
 node <このフォルダ>/skills/dashboard/scripts/dashboard.ts serve  # http://127.0.0.1:8765 で配信する
+node <このフォルダ>/skills/dashboard/scripts/dashboard.ts export # クラウドで見るために、共有フォルダに書き出す（"cloud_view": true の時だけ）
+node <このフォルダ>/skills/dashboard/scripts/dashboard.ts viewer # クラウドで見るための Artifact 用のページを .dev/glass-cockpit/viewer.html に書き出す
 ```
 
 `serve` のポートが使われていれば、次の空いているポートを使います。
