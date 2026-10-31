@@ -125,6 +125,10 @@ td.when { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .error { color: var(--crit); background: var(--tile); border: 1px solid var(--crit); border-radius: 10px; padding: 12px 16px; }
 `;
 
+// 利用状況のグラフ。ブラウザで描くスクリプトと見た目を、そのまま HTML に埋め込む (外部のファイルを読ませない)
+const CHARTS_JS = fs.readFileSync(new URL("./charts.js", import.meta.url), "utf-8");
+const CHARTS_CSS = fs.readFileSync(new URL("./charts.css", import.meta.url), "utf-8");
+
 const esc = (s: unknown): string =>
   String(s ?? "")
     .replace(/&/g, "&amp;")
@@ -580,6 +584,31 @@ function render(dashboardPath: string, refresh?: number, interactive = false): s
     gatesTile(Array.isArray(dashboard.gates) ? dashboard.gates : DEFAULT_GATES, m.skills ?? {}, m.skills_scope),
   ];
 
+  // 利用状況: Opus 以上の費用の割合と、頼んだのと違うモデルで動いた回数。グラフは charts.js がブラウザで描く
+  const usage: Json = m.usage ?? { efforts: [], daily: [], hourly: [], fallbacks: [] };
+  const highCost = models.filter((x) => x.tier === "high").reduce((a, x) => a + x.cost_usd, 0);
+  const modelCost = models.reduce((a, x) => a + x.cost_usd, 0);
+  const highShare = modelCost ? highCost / modelCost : null;
+  const fallbacks: Json[] = usage.fallbacks ?? [];
+  const fallbackCount = fallbacks.reduce((a, x) => a + x.calls, 0);
+  const shortModel = (s: string) => s.replace(/^claude-/, "");
+  const usageHints: [string, string][] = [[`Opus 以上 ${pct(highShare)}`, ""]];
+  if (fallbackCount) usageHints.push([`代わりのモデルで ${n(fallbackCount)} 回`, "warn"]);
+  const usageSummary = usageHints.map(([t, c]) => `<span class="hint ${c}">${esc(t)}</span>`).join("");
+  const usageTiles = [
+    tile("Opus 以上の割合（費用）", pct(highShare), `Opus 未満 ${usd(modelCost - highCost)} / 計 ${usd(modelCost)}`),
+    tile(
+      "代わりのモデルで動いた回数",
+      `${n(fallbackCount)} 回`,
+      fallbacks.length
+        ? fallbacks.slice(0, 2).map((f) => `${shortModel(f.requested)} → ${shortModel(f.model)} ${n(f.calls)} 回`).join(" · ")
+        : "頼んだモデルのまま動いています",
+      fallbackCount ? "warn" : "",
+    ),
+  ];
+  // JSON を <script> に入れるので、</script> で閉じられないよう < を逃がす
+  const usageJson = JSON.stringify({ ...usage, days }).replace(/</g, "\\u003c");
+
   // 進行中 → todo（先頭だけ）→ 残りの todo・完了・やらない（折りたたみ）
   const byStatus = (f: (st: string) => boolean) => tasks.filter((t) => f(String(t.status ?? "")));
   const active = byStatus((st) => st === "doing").concat(byStatus((st) => st === "blocked"));
@@ -632,7 +661,7 @@ function render(dashboardPath: string, refresh?: number, interactive = false): s
 <html lang="ja"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="glass-cockpit-collected-at" content="${esc(m.collected_at)}">
-<title>[${esc(status.label)}] ${title}</title><style>${CSS}</style></head>
+<title>[${esc(status.label)}] ${title}</title><style>${CSS}${CHARTS_CSS}</style></head>
 <body><main>
 <header><h1>${title}</h1><span class="meta">${meta}</span></header>
 ${statusHtml}
@@ -640,6 +669,8 @@ ${errorHtml}
 <div class="tiles">${tiles.join("")}</div>
 <details class="fold-section" data-persist="operations"><summary>運用状況${activitySummary}</summary>
 <div class="tiles">${activityTiles.join("")}</div></details>
+<details class="fold-section" data-persist="usage"><summary>利用状況${usageSummary}</summary>
+<div class="tiles">${usageTiles.join("")}</div><div id="usage-charts"></div></details>
 ${sessionsSection(m.recent_sessions ?? [], latest.id, project, Date.now())}
 ${worktreeSection(worktrees)}
 <section><div class="task-head"><h2>タスク</h2><input id="q" type="search" placeholder="タスクを絞り込む" aria-label="タスクを絞り込む"></div>
@@ -647,7 +678,8 @@ ${taskHtml}</section>
 <section><h2>未回答の質問</h2>
 <div class="table"><table><thead><tr><th>ID</th><th>緊急度</th><th>問い</th><th>既定の行動</th></tr></thead>
 <tbody>${qRows}</tbody></table></div>${answeredHtml}</section>
-</main><script>${script}</script></body></html>
+</main><script type="application/json" id="usage-data">${usageJson}</script>
+<script>${script}</script><script>${CHARTS_JS}</script></body></html>
 `;
 }
 

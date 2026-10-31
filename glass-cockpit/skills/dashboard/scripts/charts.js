@@ -15,7 +15,7 @@
   const OTHER = "その他";
   const UNKNOWN = "unknown";
   const METRICS = {
-    cost: { label: "費用", key: "cost_usd", fmt: (v) => "$" + (v >= 100 ? v.toFixed(0) : v >= 1 ? v.toFixed(2) : v.toFixed(3)) },
+    cost: { label: "費用", key: "cost_usd", fmt: (v) => "$" + (v >= 100 ? v.toFixed(0) : v >= 0.1 ? v.toFixed(2) : v.toFixed(3)) },
     output: { label: "出力トークン", key: "output_tokens", fmt: (v) => tokens(v) },
     calls: { label: "呼び出し回数", key: "calls", fmt: (v) => Math.round(v).toLocaleString("ja-JP") + " 回" },
   };
