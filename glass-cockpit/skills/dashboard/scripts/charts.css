@@ -1,0 +1,57 @@
+/* 利用状況のグラフ (charts.js)。色はダッシュボードの --tile の上で確かめた値 (モデルは区別の色、エフォートは1色の濃淡) */
+:root {
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100; --series-5: #e87ba4;
+  --series-none: #a3a29b;
+  --effort-1: #86b6ef; --effort-2: #5598e7; --effort-3: #2a78d6; --effort-4: #1c5cab; --effort-5: #104281;
+  --heat-ink: #ffffff;
+  --grid: #eceef1; --axis: #c3c7ce;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500; --series-5: #d55181;
+    --series-none: #6b6a65;
+    --effort-1: #184f95; --effort-2: #256abf; --effort-3: #3987e5; --effort-4: #6da7ec; --effort-5: #9ec5f4;
+    --heat-ink: #0b0b0b;
+    --grid: #262a31; --axis: #3a404a;
+  }
+}
+#usage-charts { display: grid; gap: 16px; margin-top: 12px; }
+.viz-controls { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; border-left: 1px solid var(--line); line-height: 26px; padding: 0 12px; color: var(--muted); }
+.seg button:first-child { border-left: 0; }
+.seg button:hover { color: var(--ink); border-color: var(--line); }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--tile); }
+.viz { margin: 0; background: var(--tile); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px 16px; min-width: 0; }
+.viz figcaption { font-size: 13px; color: var(--muted); font-weight: 600; margin-bottom: 6px; font-variant-numeric: tabular-nums; }
+.viz svg { display: block; width: 100%; height: auto; }
+.viz .grid { stroke: var(--grid); stroke-width: 1; }
+.viz .axis { stroke: var(--axis); stroke-width: 1; }
+.viz .tick { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.viz .hit { fill: transparent; }
+.viz .hit:hover { fill: var(--ink); fill-opacity: 0.05; }
+.viz-empty { color: var(--muted); margin: 8px 0; }
+.viz-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--ink); margin-bottom: 4px; }
+.viz-legend i, .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.viz-table { margin-top: 8px; }
+.viz-pair { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; }
+@media (max-width: 900px) { .viz-pair { grid-template-columns: minmax(0, 1fr); } }
+.viz .table { border: 0; }
+table.heat th, table.heat td { padding: 6px 10px; }
+table.heat th { font-size: 13px; color: var(--ink); font-weight: 600; white-space: nowrap; }
+table.heat td.cell { font-variant-numeric: tabular-nums; line-height: 1.3; }
+table.heat td.cell small { display: block; font-size: 11px; opacity: 0.8; }
+table.heat td.heat-1 { background: var(--effort-1); color: var(--ink); }
+table.heat td.heat-2 { background: var(--effort-2); color: var(--ink); }
+table.heat td.heat-3 { background: var(--effort-3); color: var(--heat-ink); }
+table.heat td.heat-4 { background: var(--effort-4); color: var(--heat-ink); }
+table.heat td.heat-5 { background: var(--effort-5); color: var(--heat-ink); }
+.hpanels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 420px) { .hpanels { grid-template-columns: minmax(0, 1fr); } }
+.hhead { font-size: 13px; color: var(--ink); font-weight: 600; margin-bottom: 4px; }
+.hrow { display: grid; grid-template-columns: 4.5em minmax(0, 1fr) auto; align-items: center; gap: 8px; font-size: 13px; padding: 3px 0; }
+.hlabel { color: var(--muted); }
+.htrack { height: 10px; }
+.htrack i { display: block; height: 100%; border-radius: 0 4px 4px 0; min-width: 2px; }
+.hval { font-variant-numeric: tabular-nums; }
+.viz-tip { position: fixed; z-index: 10; pointer-events: none; white-space: pre; background: var(--tile); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 12px; line-height: 1.5; box-shadow: 0 2px 8px rgba(0,0,0,0.12); font-variant-numeric: tabular-nums; }
