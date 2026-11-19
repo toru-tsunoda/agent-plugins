@@ -1,6 +1,6 @@
 {
-  "updated_at": "2026-10-29",
-  "source": "https://platform.claude.com/docs/en/about-claude/pricing（Haiku 5.5 はプロンプト10万トークン以下の単価）",
+  "updated_at": "2026-11-19",
+  "source": "https://platform.claude.com/docs/en/about-claude/pricing（Haiku 5.5 はプロンプト10万トークンを超えると long_context の単価）",
   "unit": "USD / 100万トークン",
   "cache_write_multiplier": {
     "5m": 1.25,
@@ -20,7 +20,8 @@
     {"prefix": "claude-sonnet-5-5", "input": 2.0, "output": 10.0, "cache_read": 0.1, "tier": "low"},
     {"prefix": "claude-sonnet-5", "input": 2.0, "output": 10.0, "cache_read": 0.2, "tier": "low"},
     {"prefix": "claude-sonnet-4", "input": 3.0, "output": 15.0, "cache_read": 0.3, "tier": "low"},
-    {"prefix": "claude-haiku-5-5", "input": 0.1, "output": 0.5, "cache_read": 0.01, "tier": "low"},
+    {"prefix": "claude-haiku-5-5", "input": 0.1, "output": 0.5, "cache_read": 0.01, "tier": "low",
+     "long_context": {"threshold": 100000, "input": 0.5, "output": 2.5, "cache_read": 0.05}},
     {"prefix": "claude-haiku-4-5", "input": 1.0, "output": 5.0, "cache_read": 0.1, "tier": "low"},
     {"prefix": "claude-3-5-haiku", "input": 0.8, "output": 4.0, "cache_read": 0.08, "tier": "low"}
   ]

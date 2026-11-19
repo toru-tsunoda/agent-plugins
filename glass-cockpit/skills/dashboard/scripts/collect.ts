@@ -20,6 +20,7 @@ import { readHookState } from "./hookstate.ts";
 import { configDir, expandUser } from "./paths.ts";
 import { runningSessions } from "./running.ts";
 import { sessionState, StateTracker } from "./state.ts";
+import { UsageTally } from "./usage.ts";
 
 type Json = Record<string, any>;
 
@@ -30,7 +31,20 @@ export interface PriceTable {
   cacheWrite5m: number;
   cacheWrite1h: number;
   fastMode: number;
-  models: { prefix: string; input: number; output: number; cacheRead: number; tier: Tier }[];
+  models: ModelPrice[];
+}
+
+interface Rates {
+  input: number;
+  output: number;
+  cacheRead: number;
+}
+
+/** 料金表の1行。longContext があれば、プロンプト (入力・キャッシュ読み込み・書き込みの合計) が threshold を超えた呼び出しは、その単価で計算する */
+interface ModelPrice extends Rates {
+  prefix: string;
+  tier: Tier;
+  longContext: (Rates & { threshold: number }) | null;
 }
 
 /** モデルの格。high は Opus 以上 (Opus・Fable・Mythos)、low は Sonnet・Haiku。 */
@@ -61,6 +75,15 @@ export function loadPrices(file?: string | null): PriceTable {
           input: +m.input,
           output: +m.output,
           cacheRead: +m.cache_read,
+          longContext:
+            m.long_context && +m.long_context.threshold > 0
+              ? {
+                  threshold: +m.long_context.threshold,
+                  input: +m.long_context.input,
+                  output: +m.long_context.output,
+                  cacheRead: +m.long_context.cache_read,
+                }
+              : null,
           // tier が無ければ名前から推す (最新化で行が増えても壊れない)
           tier: (["high", "low", "unknown"].includes(m.tier) ? m.tier : inferTier(String(m.prefix))) as Tier,
         }))
@@ -134,7 +157,6 @@ function priceFor(prices: PriceTable, model?: string) {
 function callCost(prices: PriceTable, model: string | undefined, usage: Json): number | null {
   const p = priceFor(prices, model);
   if (p === null) return null;
-  const { input: inp, output: out, cacheRead: read } = p;
   const cc = usage.cache_creation || {};
   let w5 = cc.ephemeral_5m_input_tokens;
   let w1 = cc.ephemeral_1h_input_tokens;
@@ -142,6 +164,10 @@ function callCost(prices: PriceTable, model: string | undefined, usage: Json): n
     w5 = usage.cache_creation_input_tokens ?? 0;
     w1 = 0;
   }
+  // プロンプトの長さは、入力・キャッシュ読み込み・キャッシュ書き込みの合計。しきい値ちょうどは安いほう
+  const promptTokens = (usage.input_tokens ?? 0) + (w5 || 0) + (w1 || 0) + (usage.cache_read_input_tokens ?? 0);
+  const rates = p.longContext && promptTokens > p.longContext.threshold ? p.longContext : p;
+  const { input: inp, output: out, cacheRead: read } = rates;
   let cost =
     ((usage.input_tokens ?? 0) * inp +
       (w5 || 0) * inp * prices.cacheWrite5m +
@@ -366,6 +392,7 @@ export function collect(
   const exitCodeResults = new Set<string>(); // 「Exit code N」で返った tool_use_id (コマンドは動いて、0 以外で終わった)
   let autoContinues = 0;
   let apiErrors = 0;
+  const usage = new UsageTally(); // 日・モデル・エフォートごとの利用 (グラフ用)
 
   for (const d of dirs) {
     // メインのセッションと、その下の subagents/*.jsonl
@@ -386,7 +413,7 @@ export function collect(
         sess = new Session(sid, path.basename(d));
         sessions.set(sid, sess);
       }
-      const seenMsgs = new Map<string, [string, string | undefined, Json]>();
+      const seenMsgs = new Map<string, [string, string | undefined, Json, string | undefined, string | undefined]>(); // [時刻, モデル, usage, 頼んだモデル, エフォート]
       const tracker = new StateTracker();
       if (isSub) sess.subs.push(tracker);
       else sess.main = tracker;
@@ -429,8 +456,15 @@ export function collect(
           }
           const mid = m.id || o.requestId;
           const u = m.usage;
-          if (!mid || !u || m.model === "<synthetic>" || seenMsgs.has(mid)) continue;
-          seenMsgs.set(mid, [ts || "", m.model, u]);
+          if (!mid || !u || m.model === "<synthetic>") continue;
+          const seen = seenMsgs.get(mid);
+          if (seen) {
+            // 同じ応答の2行目以降。数えるのは1行目だが、1行目に無い頼んだモデル・エフォートは後の行から補う
+            seen[3] ??= o.requestedModel;
+            seen[4] ??= o.perTurnEffort ?? o.effort;
+            continue;
+          }
+          seenMsgs.set(mid, [ts || "", m.model, u, o.requestedModel, o.perTurnEffort ?? o.effort]);
         } else if (t === "user") {
           sess.touch(ts);
           const m = o.message || {};
@@ -459,7 +493,7 @@ export function collect(
       let prev: { ts: string; model?: string; prompt: number } | null = null;
       let ttl = CACHE_TTL_5M;
       const ordered = [...seenMsgs.values()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
-      for (const [ts, model, u] of ordered) {
+      for (const [ts, model, u, requested, effort] of ordered) {
         calls++;
         const read = u.cache_read_input_tokens ?? 0;
         const prompt = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + read;
@@ -489,6 +523,7 @@ export function collect(
         if (isSub) ms.subCalls++;
         ms.cost += c ?? 0;
         modelStats.set(name, ms);
+        usage.add({ ts, model, requested, effort, sub: isSub, cost: c, usage: u });
       }
     }
   }
@@ -551,6 +586,7 @@ export function collect(
     models: [...modelStats.entries()]
       .map(([model, v]) => ({ model, calls: v.calls, sub_calls: v.subCalls, cost_usd: round4(v.cost), tier: v.tier }))
       .sort((a, b) => b.cost_usd - a.cost_usd || b.calls - a.calls),
+    usage: usage.summary(),
     subagent_cost_usd: round4(live.reduce((a, s) => a + s.subCost, 0)),
     // 最後にログに書かれた発言・ツールの結果 (フックの記録は、セッションを閉じた時なども含むので使わない)。タスクの鮮度に使う
     last_activity_at: live.reduce<string | null>((a, s) => (a === null || (s.lastTs as string) > a ? s.lastTs : a), null),
