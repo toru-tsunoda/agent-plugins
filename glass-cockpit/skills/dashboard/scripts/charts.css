@@ -31,6 +31,7 @@
 .viz .hit { fill: transparent; }
 .viz .hit:hover { fill: var(--ink); fill-opacity: 0.05; }
 .viz-empty { color: var(--muted); margin: 8px 0; }
+.viz-basis { color: var(--muted); font-size: 12px; margin: 0; }
 .viz-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--ink); margin-bottom: 4px; }
 .viz-legend i, .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
 .viz-table { margin-top: 8px; }

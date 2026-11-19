@@ -585,24 +585,29 @@ function render(dashboardPath: string, refresh?: number, interactive = false): s
   ];
 
   // 利用状況: Opus 以上の費用の割合と、頼んだのと違うモデルで動いた回数。グラフは charts.js がブラウザで描く
-  const usage: Json = m.usage ?? { efforts: [], daily: [], hourly: [], fallbacks: [] };
+  const usage: Json = m.usage ?? { efforts: [], daily: [], hourly: [], fallbacks: [], comparable_calls: 0 };
   const highCost = models.filter((x) => x.tier === "high").reduce((a, x) => a + x.cost_usd, 0);
   const modelCost = models.reduce((a, x) => a + x.cost_usd, 0);
   const highShare = modelCost ? highCost / modelCost : null;
   const fallbacks: Json[] = usage.fallbacks ?? [];
   const fallbackCount = fallbacks.reduce((a, x) => a + x.calls, 0);
+  const comparableCalls: number = usage.comparable_calls ?? 0;
   const shortModel = (s: string) => s.replace(/^claude-/, "");
   const usageHints: [string, string][] = [[`Opus 以上 ${pct(highShare)}`, ""]];
-  if (fallbackCount) usageHints.push([`代わりのモデルで ${n(fallbackCount)} 回`, "warn"]);
+  if (fallbackCount) usageHints.push([`頼んだのと違うモデルで ${n(fallbackCount)} 回`, "warn"]);
   const usageSummary = usageHints.map(([t, c]) => `<span class="hint ${c}">${esc(t)}</span>`).join("");
+  // どちらのタイルも、グラフの期間の切り替えには連動しない (集計した期間全体の値)
   const usageTiles = [
-    tile("Opus 以上の割合（費用）", pct(highShare), `Opus 未満 ${usd(modelCost - highCost)} / 計 ${usd(modelCost)}`),
+    tile(`Opus 以上の割合（費用、${days}日以内）`, pct(highShare), `Opus 未満 ${usd(modelCost - highCost)} / 計 ${usd(modelCost)}`),
     tile(
-      "代わりのモデルで動いた回数",
-      `${n(fallbackCount)} 回`,
-      fallbacks.length
-        ? fallbacks.slice(0, 2).map((f) => `${shortModel(f.requested)} → ${shortModel(f.model)} ${n(f.calls)} 回`).join(" · ")
-        : "頼んだモデルのまま動いています",
+      `頼んだのと違うモデルで動いた回数（${days}日以内）`,
+      comparableCalls ? `${n(fallbackCount)} 回` : "—",
+      !comparableCalls
+        ? "頼んだモデルと比べられる記録がありません（別名で頼んだ時や、頼んだモデルが残っていない時は比べません）"
+        : fallbacks.length
+          ? `比べられた ${n(comparableCalls)} 回のうち · ` +
+            fallbacks.slice(0, 2).map((f) => `${shortModel(f.requested)} → ${shortModel(f.model)} ${n(f.calls)} 回`).join(" · ")
+          : `比べられた ${n(comparableCalls)} 回は、どれも頼んだモデルで動いています`,
       fallbackCount ? "warn" : "",
     ),
   ];

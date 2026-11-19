@@ -7,6 +7,9 @@
  *   グラフ2: モデル × エフォートの表。色の濃さで量を出す
  *   グラフ3: エフォートごとの、1回あたりの思考トークンと費用
  *
+ * どのグラフも、集計 (usage.ts) が決めた期間の枠 (data.slots) に入った行だけを使う。
+ * 見た時刻やブラウザのタイムゾーンは使わない (同じ HTML なら、いつ・どこで見ても同じ数になる)。
+ *
  * 外部のライブラリは使わない (オフラインでも、クラウドの sandbox の iframe でも動くように)。
  * 文字列を返す関数だけで組み、最後に DOM へ入れる。
  */
@@ -30,9 +33,6 @@
   const esc = (s) =>
     String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#x27;" })[c]);
   const shortModel = (m) => String(m).replace(/^claude-/, "");
-  const pad = (n) => String(n).padStart(2, "0");
-  const dayKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  const hourKey = (d) => `${dayKey(d)}T${pad(d.getHours())}`;
 
   /**
    * 色の割り当て。モデルは集計の全期間の費用の多い順に一度だけ決める (指標や期間を切り替えても色が変わらない)。
@@ -52,16 +52,17 @@
     return { model, effort, modelOrder: top };
   }
 
-  /** 期間の行と、棒の並び (時刻のキー) を返す */
-  function slots(data, range, now) {
-    const keys = [];
-    if (range === "24h") {
-      for (let h = 23; h >= 0; h--) keys.push(hourKey(new Date(now - h * 3600e3)));
-      return { keys, rows: data.hourly, at: "hour" };
-    }
-    const n = Math.min(range === "7d" ? 7 : 30, data.days || 30);
-    for (let d = n - 1; d >= 0; d--) keys.push(dayKey(new Date(now - d * 86400e3)));
-    return { keys, rows: data.daily.filter((r) => r.day >= keys[0]), at: "day" };
+  /**
+   * 期間の行と、棒の並び (時刻のキー) を返す。枠は集計 (usage.ts) が決めたもの。
+   * 行は枠に入ったものだけにする (棒・表・1回あたりで、同じ行を数える)
+   */
+  function slots(data, range) {
+    const at = range === "24h" ? "hour" : "day";
+    const all = data.slots?.[at] ?? [];
+    const keys = at === "hour" ? all : all.slice(-Math.min(range === "7d" ? 7 : 30, data.days || 30));
+    const set = new Set(keys);
+    const rows = (at === "hour" ? data.hourly : data.daily).filter((r) => set.has(r[at]));
+    return { keys, rows, at };
   }
 
   const seriesOf = (r, by, colors) => (by === "effort" ? r.effort : colors.model.has(r.model) ? r.model : OTHER);
@@ -88,9 +89,9 @@
     return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
   }
 
-  function stackedBars(data, st, colors, now, width) {
+  function stackedBars(data, st, colors, width) {
     const metric = METRICS[st.metric];
-    const { keys, rows, at } = slots(data, st.range, now);
+    const { keys, rows, at } = slots(data, st.range);
     const index = new Map(keys.map((k, i) => [k, i]));
     const stacks = keys.map(() => new Map());
     const present = new Set();
@@ -144,7 +145,13 @@
     });
     g += `<line class="axis" x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}"/>`;
     const total = totals.reduce((a, b) => a + b, 0);
-    const caption = `${RANGES[st.range]}の${metric.label}（${BYS[st.by]}）　計 ${metric.fmt(total)}`;
+    const calls = rows.reduce((a, r) => a + r.calls, 0);
+    const unpriced = rows.reduce((a, r) => a + (r.unpriced_calls ?? 0), 0);
+    let caption = `${RANGES[st.range]}の${metric.label}（${BYS[st.by]}）　計 ${metric.fmt(total)}`;
+    if (st.metric === "cost" && unpriced) caption += `（単価の分からない ${unpriced} 回を除く）`;
+    const empty = !calls
+      ? "この期間の記録はありません"
+      : `この期間の ${calls} 回は単価の分からないモデルだけなので、費用を出せません`;
     const legend = series.length >= 2 ? legendHtml(series.map((s) => [seriesLabel(s, st.by), colorOf(s, st.by, colors)])) : "";
     const table =
       `<details class="viz-table"><summary>表で見る</summary><div class="table"><table><thead><tr><th>${at === "hour" ? "時" : "日"}</th>` +
@@ -162,7 +169,7 @@
       `<figure class="viz"><figcaption>${esc(caption)}</figcaption>${legend}` +
       (total
         ? `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(caption)}">${g}</svg>`
-        : `<p class="viz-empty">この期間の記録はありません</p>`) +
+        : `<p class="viz-empty">${esc(empty)}</p>`) +
       `${total ? table : ""}</figure>`
     );
   }
@@ -172,9 +179,9 @@
   }
 
   /** モデル × エフォート。セルの濃さは量に比べる (1色の濃淡)。セルに値と回数を書く */
-  function matrix(data, st, colors, now) {
+  function matrix(data, st, colors) {
     const metric = METRICS[st.metric];
-    const { rows } = slots(data, st.range, now);
+    const { rows } = slots(data, st.range);
     const cells = new Map();
     const models = new Set();
     const efforts = new Set();
@@ -212,34 +219,40 @@
   }
 
   /** エフォートごとの1回あたり。思考トークンと費用は桁が違うので、横に並べた2つの棒にする (軸を共有しない) */
-  function effortEffect(data, st, colors, now) {
-    const { rows } = slots(data, st.range, now);
+  function effortEffect(data, st, colors) {
+    const { rows } = slots(data, st.range);
     const by = new Map();
     for (const r of rows) {
       if (r.sub) continue; // サブエージェントは頼む仕事が違うので比べない
-      const b = by.get(r.effort) ?? { calls: 0, thinking: 0, cost: 0 };
+      const b = by.get(r.effort) ?? { calls: 0, thinking: 0, thinkingCalls: 0, cost: 0, pricedCalls: 0 };
       b.calls += r.calls;
+      // 分母は、その値がログにあった回数 (無い回を 0 として数えると平均が低く見える)
       b.thinking += r.thinking_tokens;
+      b.thinkingCalls += r.thinking_calls ?? r.calls;
       b.cost += r.cost_usd;
+      b.pricedCalls += r.calls - (r.unpriced_calls ?? 0);
       by.set(r.effort, b);
     }
     const es = data.efforts.filter((e) => by.get(e)?.calls);
     if (!es.length) return "";
+    // get は [値, 分母の回数] を返す。分母が 0 の行は「—」
     const panel = (title, get, fmt) => {
-      const max = Math.max(...es.map((e) => get(by.get(e))));
+      const vals = new Map(es.map((e) => [e, get(by.get(e))]));
+      const max = Math.max(0, ...[...vals.values()].filter(([, n]) => n).map(([v]) => v));
       const rowsHtml = es
         .map((e) => {
-          const v = get(by.get(e));
+          const [v, n] = vals.get(e);
+          if (!n) return `<div class="hrow" title="${esc(`${seriesLabel(e, "effort")}: 記録がありません`)}"><span class="hlabel">${esc(seriesLabel(e, "effort"))}</span><span class="htrack"></span><span class="hval">—</span></div>`;
           const w = max ? (v / max) * 100 : 0;
-          return `<div class="hrow" title="${esc(`${seriesLabel(e, "effort")}: ${fmt(v)}（${by.get(e).calls} 回）`)}"><span class="hlabel">${esc(seriesLabel(e, "effort"))}</span><span class="htrack"><i style="width:${w}%;background:${colorOf(e, "effort", colors)}"></i></span><span class="hval">${esc(fmt(v))}</span></div>`;
+          return `<div class="hrow" title="${esc(`${seriesLabel(e, "effort")}: ${fmt(v)}（${n} 回の平均）`)}"><span class="hlabel">${esc(seriesLabel(e, "effort"))}</span><span class="htrack"><i style="width:${w}%;background:${colorOf(e, "effort", colors)}"></i></span><span class="hval">${esc(fmt(v))}</span></div>`;
         })
         .join("");
       return `<div class="hpanel"><div class="hhead">${esc(title)}</div>${rowsHtml}</div>`;
     };
     return (
       `<figure class="viz"><figcaption>エフォートごとの1回あたり（${esc(RANGES[st.range])}、メインのエージェントだけ）</figcaption><div class="hpanels">` +
-      panel("思考トークン", (b) => b.thinking / b.calls, tokens) +
-      panel("費用", (b) => b.cost / b.calls, METRICS.cost.fmt) +
+      panel("思考トークン", (b) => [b.thinkingCalls ? b.thinking / b.thinkingCalls : 0, b.thinkingCalls], tokens) +
+      panel("費用", (b) => [b.pricedCalls ? b.cost / b.pricedCalls : 0, b.pricedCalls], METRICS.cost.fmt) +
       `</div></figure>`
     );
   }
@@ -252,9 +265,18 @@
     return `<div class="viz-controls">${group("range", RANGES)}${group("metric", Object.fromEntries(Object.entries(METRICS).map(([k, m]) => [k, m.label])))}${group("by", BYS)}</div>`;
   }
 
-  function renderUsage(data, st, now, width = 720) {
+  /** 期間の基準 (いつ時点の、どのタイムゾーンの集計か) */
+  function basis(data) {
+    if (!data.now) return "";
+    const keys = data.slots?.hour ?? [];
+    const last = keys[keys.length - 1];
+    const label = last ? `${Number(last.slice(5, 7))}/${Number(last.slice(8, 10))} ${Number(last.slice(11))}時台` : "";
+    return `<p class="viz-basis">${esc(`${label}までの集計（時刻は ${data.tz ?? "集計した PC の時刻"}）。直近24時間は、集計した時の時を含めた24時間分の枠です`)}</p>`;
+  }
+
+  function renderUsage(data, st, width = 720) {
     const colors = colorMaps(data);
-    return controls(st) + stackedBars(data, st, colors, now, width) + `<div class="viz-pair">${matrix(data, st, colors, now)}${effortEffect(data, st, colors, now)}</div>`;
+    return controls(st) + basis(data) + stackedBars(data, st, colors, width) + `<div class="viz-pair">${matrix(data, st, colors)}${effortEffect(data, st, colors)}</div>`;
   }
 
   const api = { renderUsage, METRICS, RANGES, BYS };
@@ -275,7 +297,7 @@
     by: BYS[store.get("usage:by")] ? store.get("usage:by") : "model",
   };
   // 図の枠の内側の幅 (枠の左右の余白 18px ずつを引く)
-  const draw = () => { root.innerHTML = renderUsage(data, st, Date.now(), root.clientWidth - 38); };
+  const draw = () => { root.innerHTML = renderUsage(data, st, root.clientWidth - 38); };
   let lastWidth = root.clientWidth;
   const redrawIfResized = () => {
     if (root.clientWidth && root.clientWidth !== lastWidth) { lastWidth = root.clientWidth; draw(); }

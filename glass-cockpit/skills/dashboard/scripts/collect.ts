@@ -431,7 +431,14 @@ export function collect(
           }
           const mid = m.id || o.requestId;
           const u = m.usage;
-          if (!mid || !u || m.model === "<synthetic>" || seenMsgs.has(mid)) continue;
+          if (!mid || !u || m.model === "<synthetic>") continue;
+          const seen = seenMsgs.get(mid);
+          if (seen) {
+            // 同じ応答の2行目以降。数えるのは1行目だが、1行目に無い頼んだモデル・エフォートは後の行から補う
+            seen[3] ??= o.requestedModel;
+            seen[4] ??= o.perTurnEffort ?? o.effort;
+            continue;
+          }
           seenMsgs.set(mid, [ts || "", m.model, u, o.requestedModel, o.perTurnEffort ?? o.effort]);
         } else if (t === "user") {
           sess.touch(ts);
