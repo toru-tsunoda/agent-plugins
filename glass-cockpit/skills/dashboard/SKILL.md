@@ -58,6 +58,7 @@ AI が自律的に作業する時に、人が進み具合を一目で見られ�
 2. `.dev/glass-cockpit/prices.json` の `models` を更新する。
    - `prefix` はログの `model` 名の接頭辞。`claude-opus-5` と `claude-opus-5-5` のように、長い接頭辞が短いほうより先に照合される。
    - 単価は USD / 100万トークン。`input`、`output`、`cache_read` を書く。`tier` は、Opus・Fable・Mythos 以上なら `high`、Sonnet・Haiku なら `low`（「運用状況」のモデルの警告に使う）。キャッシュ書き込みは `cache_write_multiplier`（5分は input の 1.25 倍、1時間は 2 倍）で計算するので、ここには書かない。
+   - プロンプトが長いと単価が上がるモデル（Haiku 5.5 は10万トークンを超えると上がる）は、`long_context` に `threshold`（プロンプトのトークン数。これを超えると高い単価）と、その時の `input`・`output`・`cache_read` を書く。プロンプトの長さは、入力・キャッシュ読み込み・キャッシュ書き込みの合計で、呼び出しごとに判定する。
    - 新しいモデルは行を足し、なくなったモデルの行は古いログの集計のために残す。
 3. `updated_at` を今日の日付にし、`source` に確認した場所（公式ページの URL など）を書く。
 4. `build` で HTML を作り直し、右上の料金表の日付が変わったことを確かめる。

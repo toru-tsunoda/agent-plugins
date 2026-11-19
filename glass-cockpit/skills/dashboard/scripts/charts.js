@@ -18,12 +18,22 @@
   const OTHER = "その他";
   const UNKNOWN = "unknown";
   const METRICS = {
-    cost: { label: "費用", key: "cost_usd", fmt: (v) => "$" + (v >= 100 ? v.toFixed(0) : v >= 0.1 ? v.toFixed(2) : v.toFixed(3)) },
+    cost: { label: "費用", key: "cost_usd", fmt: (v) => usd(v) },
     output: { label: "出力トークン", key: "output_tokens", fmt: (v) => tokens(v) },
     calls: { label: "呼び出し回数", key: "calls", fmt: (v) => Math.round(v).toLocaleString("ja-JP") + " 回" },
   };
   const RANGES = { "24h": "直近24時間", "7d": "7日", "30d": "30日" };
   const BYS = { model: "モデル別", effort: "エフォート別" };
+
+  /** 費用。少額 (Haiku の1回分など) も 0 に丸めないよう、有効数字2桁まで出す */
+  function usd(v) {
+    if (!v) return "$0";
+    if (v >= 100) return "$" + v.toFixed(0);
+    if (v >= 0.1) return "$" + v.toFixed(2);
+    if (v >= 0.001) return "$" + v.toFixed(3);
+    if (v < 1e-6) return "<$0.000001";
+    return "$" + Number(v.toPrecision(2)).toFixed(6).replace(/0+$/, "");
+  }
 
   function tokens(v) {
     if (v >= 1e6) return (v / 1e6).toFixed(v >= 1e7 ? 0 : 1) + "M";
@@ -59,10 +69,13 @@
   function slots(data, range) {
     const at = range === "24h" ? "hour" : "day";
     const all = data.slots?.[at] ?? [];
-    const keys = at === "hour" ? all : all.slice(-Math.min(range === "7d" ? 7 : 30, data.days || 30));
+    // 保持期間 (cleanupPeriodDays) より古い日は、ログが消えていて数えられないので枠を作らない
+    const want = range === "7d" ? 7 : range === "30d" ? 30 : 0;
+    const keys = at === "hour" ? all : all.slice(-Math.min(want, data.days || 30));
     const set = new Set(keys);
     const rows = (at === "hour" ? data.hourly : data.daily).filter((r) => set.has(r[at]));
-    return { keys, rows, at };
+    const short = at === "day" && keys.length < want ? keys.length : 0;
+    return { keys, rows, at, short };
   }
 
   const seriesOf = (r, by, colors) => (by === "effort" ? r.effort : colors.model.has(r.model) ? r.model : OTHER);
@@ -91,7 +104,7 @@
 
   function stackedBars(data, st, colors, width) {
     const metric = METRICS[st.metric];
-    const { keys, rows, at } = slots(data, st.range);
+    const { keys, rows, at, short } = slots(data, st.range);
     const index = new Map(keys.map((k, i) => [k, i]));
     const stacks = keys.map(() => new Map());
     const present = new Set();
@@ -148,6 +161,7 @@
     const calls = rows.reduce((a, r) => a + r.calls, 0);
     const unpriced = rows.reduce((a, r) => a + (r.unpriced_calls ?? 0), 0);
     let caption = `${RANGES[st.range]}の${metric.label}（${BYS[st.by]}）　計 ${metric.fmt(total)}`;
+    if (short) caption += `（ログの保持期間が ${short} 日なので、${short} 日分）`;
     if (st.metric === "cost" && unpriced) caption += `（単価の分からない ${unpriced} 回を除く）`;
     const empty = !calls
       ? "この期間の記録はありません"

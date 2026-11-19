@@ -31,7 +31,20 @@ export interface PriceTable {
   cacheWrite5m: number;
   cacheWrite1h: number;
   fastMode: number;
-  models: { prefix: string; input: number; output: number; cacheRead: number; tier: Tier }[];
+  models: ModelPrice[];
+}
+
+interface Rates {
+  input: number;
+  output: number;
+  cacheRead: number;
+}
+
+/** 料金表の1行。longContext があれば、プロンプト (入力・キャッシュ読み込み・書き込みの合計) が threshold を超えた呼び出しは、その単価で計算する */
+interface ModelPrice extends Rates {
+  prefix: string;
+  tier: Tier;
+  longContext: (Rates & { threshold: number }) | null;
 }
 
 /** モデルの格。high は Opus 以上 (Opus・Fable・Mythos)、low は Sonnet・Haiku。 */
@@ -62,6 +75,15 @@ export function loadPrices(file?: string | null): PriceTable {
           input: +m.input,
           output: +m.output,
           cacheRead: +m.cache_read,
+          longContext:
+            m.long_context && +m.long_context.threshold > 0
+              ? {
+                  threshold: +m.long_context.threshold,
+                  input: +m.long_context.input,
+                  output: +m.long_context.output,
+                  cacheRead: +m.long_context.cache_read,
+                }
+              : null,
           // tier が無ければ名前から推す (最新化で行が増えても壊れない)
           tier: (["high", "low", "unknown"].includes(m.tier) ? m.tier : inferTier(String(m.prefix))) as Tier,
         }))
@@ -135,7 +157,6 @@ function priceFor(prices: PriceTable, model?: string) {
 function callCost(prices: PriceTable, model: string | undefined, usage: Json): number | null {
   const p = priceFor(prices, model);
   if (p === null) return null;
-  const { input: inp, output: out, cacheRead: read } = p;
   const cc = usage.cache_creation || {};
   let w5 = cc.ephemeral_5m_input_tokens;
   let w1 = cc.ephemeral_1h_input_tokens;
@@ -143,6 +164,10 @@ function callCost(prices: PriceTable, model: string | undefined, usage: Json): n
     w5 = usage.cache_creation_input_tokens ?? 0;
     w1 = 0;
   }
+  // プロンプトの長さは、入力・キャッシュ読み込み・キャッシュ書き込みの合計。しきい値ちょうどは安いほう
+  const promptTokens = (usage.input_tokens ?? 0) + (w5 || 0) + (w1 || 0) + (usage.cache_read_input_tokens ?? 0);
+  const rates = p.longContext && promptTokens > p.longContext.threshold ? p.longContext : p;
+  const { input: inp, output: out, cacheRead: read } = rates;
   let cost =
     ((usage.input_tokens ?? 0) * inp +
       (w5 || 0) * inp * prices.cacheWrite5m +

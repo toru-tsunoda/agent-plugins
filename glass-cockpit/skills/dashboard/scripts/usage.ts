@@ -49,7 +49,8 @@ const sameModelKey = (m: string) => baseModel(m).replace(/-\d{8}$/, "");
 const pad = (n: number) => String(n).padStart(2, "0");
 const localDay = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const localHour = (d: Date) => `${localDay(d)}T${pad(d.getHours())}`;
-const round4 = (x: number) => Math.round(x * 1e4) / 1e4;
+// 少額 (Haiku の1回分は $0.0001 未満のこともある) が 0 にならないよう、小数6桁まで残す
+const round6 = (x: number) => Math.round(x * 1e6) / 1e6;
 
 /** 頼んだモデルと比べられるか。"opus" のような別名で頼んだ時や、どちらかが無い時は比べられない */
 const comparable = (requested: string | undefined, model: string | undefined): boolean =>
@@ -132,7 +133,7 @@ export class UsageTally {
             effort,
             sub: sub === "1",
             calls: b.calls,
-            cost_usd: round4(b.cost),
+            cost_usd: round6(b.cost),
             output_tokens: b.output,
             thinking_tokens: b.thinking,
             unpriced_calls: b.unpriced,
